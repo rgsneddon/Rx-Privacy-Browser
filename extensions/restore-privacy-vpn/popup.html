@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Restore Privacy VPN</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="panel" id="panel">
+      <header class="brand">
+        <img src="icons/icon-48.png" width="40" height="40" alt="" />
+        <div>
+          <h1 id="title">RESTORE PRIVACY VPN</h1>
+          <p class="catalog" id="catalog">catalog 3.3.3 · browser extension</p>
+        </div>
+      </header>
+
+      <p class="status-line">
+        Status:
+        <strong id="status-text">…</strong>
+      </p>
+
+      <div class="actions">
+        <button type="button" id="btn-connect" class="btn btn-connect">
+          Connect
+        </button>
+        <button type="button" id="btn-disconnect" class="btn btn-disconnect">
+          Disconnect
+        </button>
+      </div>
+
+      <p class="error" id="error-text" hidden></p>
+
+      <p class="disclaimer" id="disclaimer"></p>
+
+      <p class="footer">
+        Native residual clients (Windows · Android · macOS · iOS · Linux):
+        <a href="https://restoreprivacy.online/" target="_blank" rel="noopener"
+          >restoreprivacy.online</a
+        >
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

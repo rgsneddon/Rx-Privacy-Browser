@@ -1,0 +1,123 @@
+:root {
+  --navy: #0b1c2c;
+  --card: #12283a;
+  --text: #e8f1f8;
+  --muted: #9bb0c0;
+  --link: #00e5ff;
+  --green: #39ff6a;
+  --danger: #ff6b6b;
+  --btn: #1a3a52;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 13px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
+  color: var(--text);
+  background: var(--navy);
+  min-width: 300px;
+}
+
+.panel {
+  padding: 14px 16px 16px;
+  background: linear-gradient(160deg, var(--navy), #071018 70%);
+}
+
+.brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+.catalog {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.status-line {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+
+.status-line strong {
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.btn {
+  flex: 1;
+  border: 1px solid #2a4a62;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--btn);
+  color: var(--text);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-connect {
+  border-color: #1f6a3a;
+  box-shadow: 0 0 0 1px rgba(57, 255, 106, 0.15);
+}
+
+.btn-connect:not(:disabled):hover {
+  background: #1f4a32;
+}
+
+.btn-disconnect:not(:disabled):hover {
+  background: #3a1a1a;
+}
+
+.error {
+  color: var(--danger);
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.disclaimer {
+  margin: 8px 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.footer {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.footer a {
+  color: var(--link);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+.is-connected #status-text {
+  color: var(--green);
+}

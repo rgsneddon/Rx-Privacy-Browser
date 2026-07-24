@@ -1,0 +1,3 @@
+# Rx Privacy Browser — runtime is stdlib (tkinter + unittest).
+# Optional richer webview host (not required for shell/tests):
+# pywebview>=5.0

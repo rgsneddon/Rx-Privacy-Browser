@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Restore Privacy VPN",
+  "short_name": "RPT VPN",
+  "version": "3.3.3",
+  "description": "Browser-scoped Restore Privacy VPN (Connect/Disconnect). Not OS residual TUN — use paid native clients for system residual.",
+  "action": {
+    "default_title": "Restore Privacy VPN",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["proxy", "storage"],
+  "host_permissions": ["<all_urls>"]
+}
