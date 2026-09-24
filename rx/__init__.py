@@ -2,7 +2,8 @@
 
 __product__ = "Rx"
 __umbrella__ = "Restore Privacy"
-__version__ = "0.1.0"
+
+from rx.fence import VERSION as __version__
 
 from rx.tabs import TabManager
 from rx.privacy import PrivacyDefaults

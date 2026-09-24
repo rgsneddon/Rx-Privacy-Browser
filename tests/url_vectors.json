@@ -1,0 +1,186 @@
+[
+  {
+    "in": "",
+    "ok": true,
+    "network": false,
+    "onion": false,
+    "url": "about:newtab",
+    "reason": "empty"
+  },
+  {
+    "in": "about:newtab",
+    "ok": true,
+    "network": false,
+    "onion": false,
+    "url": "about:newtab",
+    "reason": "local"
+  },
+  {
+    "in": "about:blank",
+    "ok": true,
+    "network": false,
+    "onion": false,
+    "url": "about:newtab",
+    "reason": "local"
+  },
+  {
+    "in": "about:config",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "about-blocked"
+  },
+  {
+    "in": "javascript:alert(1)",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "scheme"
+  },
+  {
+    "in": "file:///etc/passwd",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "scheme"
+  },
+  {
+    "in": "data:text/html,hi",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "scheme"
+  },
+  {
+    "in": "example.com",
+    "ok": true,
+    "network": true,
+    "onion": false,
+    "url": "https://example.com/",
+    "reason": "clearnet"
+  },
+  {
+    "in": "http://example.com/a",
+    "ok": true,
+    "network": true,
+    "onion": false,
+    "url": "http://example.com/a",
+    "reason": "clearnet"
+  },
+  {
+    "in": "https://Example.COM/A",
+    "ok": true,
+    "network": true,
+    "onion": false,
+    "url": "https://example.com/A",
+    "reason": "clearnet"
+  },
+  {
+    "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion/x",
+    "ok": true,
+    "network": true,
+    "onion": true,
+    "url": "http://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion/x",
+    "reason": "onion"
+  },
+  {
+    "in": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion/x",
+    "ok": true,
+    "network": true,
+    "onion": true,
+    "url": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion/x",
+    "reason": "onion"
+  },
+  {
+    "in": "http://aaaaaaaaaaaaaaaa.onion/",
+    "ok": true,
+    "network": true,
+    "onion": true,
+    "url": "http://aaaaaaaaaaaaaaaa.onion/",
+    "reason": "onion"
+  },
+  {
+    "in": "http://evil.onion/",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "bad-onion"
+  },
+  {
+    "in": "http://not.onion.example/",
+    "ok": true,
+    "network": true,
+    "onion": false,
+    "url": "http://not.onion.example/",
+    "reason": "clearnet"
+  },
+  {
+    "in": "http://127.0.0.1/",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "private-ip"
+  },
+  {
+    "in": "http://10.1.2.3/",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "private-ip"
+  },
+  {
+    "in": "http://192.168.0.5/x",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "private-ip"
+  },
+  {
+    "in": "http://localhost/",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "local-name"
+  },
+  {
+    "in": "http://user:pass@example.com/",
+    "ok": false,
+    "network": false,
+    "onion": false,
+    "url": "",
+    "reason": "userinfo"
+  },
+  {
+    "in": "https://example.com/a?utm_source=z&b=1",
+    "ok": true,
+    "network": true,
+    "onion": false,
+    "url": "https://example.com/a?b=1",
+    "reason": "clearnet"
+  },
+  {
+    "in": "privacy search",
+    "ok": true,
+    "network": false,
+    "onion": false,
+    "url": "about:search?q=privacy+search",
+    "reason": "local-search"
+  },
+  {
+    "in": "http://example.com:8443/x",
+    "ok": true,
+    "network": true,
+    "onion": false,
+    "url": "http://example.com:8443/x",
+    "reason": "clearnet"
+  }
+]

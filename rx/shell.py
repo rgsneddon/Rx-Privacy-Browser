@@ -9,8 +9,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rx.extensions import ExtensionRegistry, ExtensionInfo
+from rx.fence import TRAFFIC_RELAY
 from rx.privacy import PrivacyDefaults, default_privacy
+from rx.session import BrowseSession, NavResult
 from rx.tabs import TabManager, Tab
+from rx.tor import null_tor
 
 
 @dataclass
@@ -22,6 +25,8 @@ class ShellState:
     extensions: ExtensionRegistry
     bundled_vpn: Optional[ExtensionInfo] = None
     started: bool = False
+    vpn_relay: bool = False
+    last_nav: Optional[NavResult] = None
     messages: List[str] = field(default_factory=list)
 
     def log(self, msg: str) -> None:
@@ -40,16 +45,20 @@ class RxShell:
         self,
         repo_root: Optional[Path] = None,
         privacy: Optional[PrivacyDefaults] = None,
+        tor=None,
     ) -> None:
         self.repo_root = Path(repo_root or Path(__file__).resolve().parent.parent).resolve()
         self.privacy = privacy or default_privacy()
-        self.privacy.assert_no_telemetry()
+        self.privacy.assert_fence()
         self.tabs = TabManager(start_url=self.privacy.start_url)
         self.extensions = ExtensionRegistry(self.repo_root)
+        # The on-disk VPN package is not loaded and is not the traffic relay.
+        self.session = BrowseSession(null_tor() if tor is None else tor)
         self.state = ShellState(
             privacy=self.privacy,
             tabs=self.tabs,
             extensions=self.extensions,
+            vpn_relay=False,
         )
 
     @property
@@ -63,22 +72,14 @@ class RxShell:
         return self.privacy.window_title(title)
 
     def bootstrap(self) -> ShellState:
-        """Start shell: enforce privacy defaults, permit extensions, load VPN."""
-        self.privacy.assert_no_telemetry()
-        if not self.extensions.extensions_permitted:
-            raise RuntimeError("extensions must be permitted for Rx VPN bundle")
-        missing = self.extensions.required_extension_files_present()
-        if missing:
-            raise FileNotFoundError(
-                f"bundled VPN incomplete under {self.extensions.bundled_vpn_path()}: {missing}"
-            )
-        vpn = self.extensions.load_bundled_vpn()
-        self.state.bundled_vpn = vpn
+        """Start the shell. Tor is the only relay; the VPN extension stays unloaded."""
+        self.privacy.assert_fence()
+        self.state.bundled_vpn = None
+        self.state.vpn_relay = False
         self.state.started = True
         self.state.log(self.product_banner)
-        self.state.log(
-            f"loaded extension {vpn.name} v{vpn.version} from {vpn.path}"
-        )
+        self.state.log(f"status={self.session.status_line()}")
+        self.state.log("relay=tor vpn_relay=false")
         self.state.log(f"start_url={self.privacy.start_url} tabs={self.tabs.tab_count()}")
         return self.state
 
@@ -92,8 +93,51 @@ class RxShell:
     def close_tab(self, tab_id: int) -> Optional[Tab]:
         return self.tabs.close_tab(tab_id)
 
-    def navigate(self, url: str) -> Tab:
-        return self.tabs.navigate_active(self.privacy.normalize_url(url))
+    def navigate(self, url: str) -> NavResult:
+        result = self.session.navigate(url)
+        self.state.last_nav = result
+        if result.allowed and not result.blocked:
+            tab = self.tabs.navigate_active(result.url)
+            if result.title:
+                tab.title = result.title
+            elif result.url.startswith("about:"):
+                tab.title = "New Tab"
+        return result
+
+    def reload(self) -> Optional[NavResult]:
+        tab = self.tabs.active_tab
+        if tab is None:
+            return None
+        result = self.session.navigate(tab.url)
+        self.state.last_nav = result
+        if result.allowed and not result.blocked:
+            if tab.url != result.url:
+                self.tabs.navigate_active(result.url)
+            if result.title:
+                self.tabs.active_tab.title = result.title
+        return result
+
+    def go_back(self) -> Optional[NavResult]:
+        tab = self.tabs.active_tab
+        if tab is None or not tab.history:
+            return None
+        result = self.session.navigate(tab.history[-1])
+        self.state.last_nav = result
+        if result.blocked or not result.allowed:
+            return result
+        self.tabs.go_back()
+        return result
+
+    def go_forward(self) -> Optional[NavResult]:
+        tab = self.tabs.active_tab
+        if tab is None or not tab.forward:
+            return None
+        result = self.session.navigate(tab.forward[-1])
+        self.state.last_nav = result
+        if result.blocked or not result.allowed:
+            return result
+        self.tabs.go_forward()
+        return result
 
     def enable_extension(self, ext_id: str) -> ExtensionInfo:
         return self.extensions.enable(ext_id)
@@ -105,6 +149,10 @@ class RxShell:
             "window_title": self.window_title,
             "banner": self.product_banner,
             "started": self.state.started,
+            "status": self.session.status_line(),
+            "traffic_relay": TRAFFIC_RELAY,
+            "vpn_relay": False,
+            "gallery_ready": False,
             "privacy": self.privacy.as_dict(),
             "active_tab": (
                 {"id": active.id, "title": active.title, "url": active.url}
@@ -135,6 +183,9 @@ class RxShell:
         lines = [
             f"=== {snap['window_title']} ===",
             snap["banner"],
+            f"status={snap['status']}",
+            f"relay={snap['traffic_relay']}",
+            "vpn_relay=false",
             f"started={snap['started']}",
             f"tabs={len(snap['tabs'])} active={snap['active_tab']}",
             f"extensions_permitted={snap['extensions_permitted']}",
@@ -144,5 +195,5 @@ class RxShell:
         return "\n".join(lines)
 
 
-def create_shell(repo_root: Optional[Path] = None) -> RxShell:
-    return RxShell(repo_root=repo_root)
+def create_shell(repo_root: Optional[Path] = None, tor=None) -> RxShell:
+    return RxShell(repo_root=repo_root, tor=tor)

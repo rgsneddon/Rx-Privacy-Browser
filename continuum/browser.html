@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Rx Privacy Browser</title>
+  <style>
+:root {
+  color-scheme: dark;
+  --bg: #0b1c2c;
+  --panel: #12283a;
+  --ink: #e8f1f8;
+  --muted: #9bb3c7;
+  --warn: #ffb020;
+  --ok: #7dffa8;
+  --line: #1e3d56;
+  --btn: #16344c;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.4 "Segoe UI", sans-serif;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+header, #nav, #tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+header {
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 700; letter-spacing: 0.01em; }
+#rx-status {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #3a2a10;
+  color: var(--warn);
+  font-weight: 700;
+}
+body.is-private #rx-status {
+  background: #123524;
+  color: var(--ok);
+}
+.fence {
+  color: var(--muted);
+  font-size: 12px;
+}
+#tabs { padding-top: 0; flex-wrap: wrap; }
+button, input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--btn);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+button { cursor: pointer; }
+button.tab.active { outline: 1px solid var(--ok); }
+#url { flex: 1; min-width: 0; background: #0e2233; }
+#stage {
+  flex: 1;
+  margin: 0 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  overflow: auto;
+  min-height: 240px;
+  position: relative;
+}
+#panel, #snapshot {
+  margin: 0;
+  padding: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+#view {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: white;
+  min-height: 420px;
+}
+noscript p {
+  margin: 12px;
+  color: var(--warn);
+  font-weight: 700;
+}
+
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Rx Privacy Browser</div>
+    <div class="fence">Tor only · VPN relay off</div>
+    <div id="rx-status" role="status">unprivate unless tor</div>
+  </header>
+  <div id="tabs"></div>
+  <div id="nav">
+    <button id="back" type="button">Back</button>
+    <button id="forward" type="button">Forward</button>
+    <button id="reload" type="button">Reload</button>
+    <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="https://example.com or http://….onion" aria-label="Address">
+    <button id="go" type="button">Go</button>
+    <button id="engine" type="button">Open Tor engine</button>
+  </div>
+  <div id="stage">
+    <div id="panel"></div>
+    <pre id="snapshot" hidden></pre>
+    <iframe id="view" hidden title="Tor page" referrerpolicy="no-referrer" sandbox="allow-scripts allow-forms allow-popups"></iframe>
+  </div>
+  <noscript><p>unprivate unless tor</p></noscript>
+  <script id="rx-boot-data" type="application/json">{"token":"","engineProxied":false,"isolatedTorWebView":false}</script>
+  <script>
+/**
+ * Navigation gate for the Continuum browser UI.
+ * Network fetches are refused unless Tor is bootstrapped and a circuit is up.
+ * VPN relay is never treated as private.
+ */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) {
+    module.exports = factory();
+  } else {
+    root.RxGate = factory();
+  }
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+  "use strict";
+
+  var UNPRIVATE_UNLESS_TOR = "unprivate unless tor";
+  var PRIVATE_VIA_TOR = "private via tor";
+  var VPN_PROXY_PORT = 1080;
+  var TRACKING = {
+    utm_source: 1,
+    utm_medium: 1,
+    utm_campaign: 1,
+    utm_term: 1,
+    utm_content: 1,
+    utm_id: 1,
+    fbclid: 1,
+    gclid: 1,
+    mc_cid: 1,
+    mc_eid: 1,
+    igshid: 1,
+  };
+  var TRACKERS = [
+    "doubleclick.net",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "facebook.net",
+    "scorecardresearch.com",
+    "hotjar.com",
+  ];
+
+  function quotePlus(s) {
+    return encodeURIComponent(s).replace(/%20/g, "+");
+  }
+
+  function isOnionHost(host) {
+    var h = String(host || "").toLowerCase().replace(/\.$/, "");
+    if (h.slice(-6) !== ".onion") return false;
+    var labels = h.split(".");
+    if (labels.length < 2 || labels[labels.length - 1] !== "onion") return false;
+    var addr = labels[labels.length - 2];
+    if (!/^[a-z2-7]{16}$/.test(addr) && !/^[a-z2-7]{56}$/.test(addr)) return false;
+    for (var i = 0; i < labels.length - 1; i++) {
+      if (!/^[a-z2-7]{1,63}$/.test(labels[i])) return false;
+    }
+    return true;
+  }
+
+  function isPrivateIp(host) {
+    var m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+    if (m) {
+      var a = +m[1];
+      var b = +m[2];
+      if (a === 10 || a === 127 || a === 0) return true;
+      if (a === 169 && b === 254) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 192 && b === 168) return true;
+      if (a >= 224) return true;
+      return false;
+    }
+    var low = String(host || "").toLowerCase();
+    if (low === "::1" || low === "0:0:0:0:0:0:0:1") return true;
+    if (low.indexOf("fe80:") === 0) return true;
+    if (low.indexOf("fc") === 0 || low.indexOf("fd") === 0) return true;
+    return false;
+  }
+
+  function badHost(host) {
+    var h = String(host || "").toLowerCase().replace(/\.$/, "");
+    if (!h) return "empty-host";
+    if (h === "localhost" || h === "localhost.localdomain" || /\.localhost$/.test(h) || /\.local$/.test(h)) {
+      return "local-name";
+    }
+    if (isPrivateIp(h)) return "private-ip";
+    if (h.slice(-6) === ".onion") {
+      return isOnionHost(h) ? null : "bad-onion";
+    }
+    if (h.indexOf("..") >= 0 || !/^[a-z0-9.-]{1,253}$/.test(h)) return "bad-host";
+    var labels = h.split(".");
+    for (var i = 0; i < labels.length; i++) {
+      var lab = labels[i];
+      if (!lab || lab.length > 63 || lab.charAt(0) === "-" || lab.charAt(lab.length - 1) === "-") {
+        return "bad-host";
+      }
+    }
+    return null;
+  }
+
+  function stripQuery(query) {
+    if (!query) return "";
+    var parts = query.split("&");
+    var kept = [];
+    for (var i = 0; i < parts.length; i++) {
+      if (!parts[i]) continue;
+      var key = parts[i].split("=")[0];
+      var decoded = key.replace(/\+/g, " ");
+      try {
+        decoded = decodeURIComponent(decoded);
+      } catch (e) {
+        decoded = key;
+      }
+      if (TRACKING[decoded.toLowerCase()]) continue;
+      kept.push(parts[i]);
+    }
+    return kept.join("&");
+  }
+
+  function bad(reason) {
+    return { ok: false, url: "", network: false, onion: false, reason: reason, host: "" };
+  }
+
+  function classifyUrl(raw) {
+    var s = String(raw == null ? "" : raw).trim();
+    if (!s) {
+      return { ok: true, url: "about:newtab", network: false, onion: false, reason: "empty", host: "" };
+    }
+    var lower = s.toLowerCase();
+    if (lower.indexOf("about:") === 0) {
+      if (lower === "about:newtab" || lower === "about:blank" || lower.indexOf("about:search?") === 0) {
+        return {
+          ok: true,
+          url: lower === "about:blank" ? "about:newtab" : s,
+          network: false,
+          onion: false,
+          reason: "local",
+          host: "",
+        };
+      }
+      return bad("about-blocked");
+    }
+    if (
+      /^[a-z][a-z0-9+.-]*:/i.test(s) &&
+      lower.indexOf("http://") !== 0 &&
+      lower.indexOf("https://") !== 0
+    ) {
+      return bad("scheme");
+    }
+    if (s.indexOf("://") < 0) {
+      if (s.indexOf(" ") >= 0 || s.indexOf(".") < 0) {
+        return {
+          ok: true,
+          url: "about:search?q=" + quotePlus(s),
+          network: false,
+          onion: false,
+          reason: "local-search",
+          host: "",
+        };
+      }
+      var hostpart = s.split("/")[0].split("@").pop();
+      var hostonly = hostpart.split(":")[0];
+      if (isOnionHost(hostonly)) s = "http://" + s;
+      else s = "https://" + s;
+    }
+    var match = /^(https?):\/\/([^\/?#]*)([^?#]*)(?:\?([^#]*))?/i.exec(s);
+    if (!match) return bad("scheme");
+    var scheme = match[1].toLowerCase();
+    if (scheme !== "http" && scheme !== "https") return bad("scheme");
+    var authority = match[2];
+    var path = match[3] || "/";
+    var query = match[4] || "";
+    if (authority.indexOf("@") >= 0) return bad("userinfo");
+    var host = "";
+    var port = "";
+    if (authority.charAt(0) === "[") {
+      var end = authority.indexOf("]");
+      if (end < 0) return bad("bad-host");
+      host = authority.slice(1, end);
+      port = authority.slice(end + 1).replace(/^:/, "");
+    } else {
+      var idx = authority.lastIndexOf(":");
+      if (idx >= 0 && authority.indexOf(":") === idx) {
+        host = authority.slice(0, idx);
+        port = authority.slice(idx + 1);
+      } else {
+        host = authority;
+      }
+    }
+    host = host.toLowerCase().replace(/\.$/, "");
+    if (port) {
+      if (!/^\d+$/.test(port)) return bad("port");
+      var pnum = parseInt(port, 10);
+      if (pnum < 1 || pnum > 65535) return bad("port");
+    }
+    var why = badHost(host);
+    if (why) return bad(why);
+    var onion = isOnionHost(host);
+    if (path.charAt(0) !== "/") path = "/" + path;
+    var q = stripQuery(query);
+    var url = scheme + "://" + host + (port ? ":" + port : "") + path + (q ? "?" + q : "");
+    return {
+      ok: true,
+      url: url,
+      network: true,
+      onion: onion,
+      reason: onion ? "onion" : "clearnet",
+      host: host,
+    };
+  }
+
+  function isTrackerHost(host) {
+    var h = String(host || "").toLowerCase().replace(/\.$/, "");
+    for (var i = 0; i < TRACKERS.length; i++) {
+      var suf = TRACKERS[i];
+      if (h === suf || h.slice(-(suf.length + 1)) === "." + suf) return true;
+    }
+    return false;
+  }
+
+  function isRouting(status) {
+    if (!status || typeof status !== "object") return false;
+    if (status.vpnRelay === true) return false;
+    if (status.socksPort === VPN_PROXY_PORT) return false;
+    var progress = Number(status.bootstrapProgress);
+    return (
+      status.routing === true &&
+      status.private === true &&
+      status.bootstrapped === true &&
+      status.circuitEstablished === true &&
+      progress >= 100
+    );
+  }
+
+  function decideNavigation(status, raw) {
+    var routing = isRouting(status);
+    var live = routing ? PRIVATE_VIA_TOR : UNPRIVATE_UNLESS_TOR;
+    var classified = classifyUrl(raw);
+    if (!classified.ok) {
+      return {
+        allow: false,
+        fetch: false,
+        local: false,
+        private: routing,
+        status: live,
+        url: "",
+        reason: classified.reason,
+        engine: false,
+        onion: false,
+      };
+    }
+    if (!classified.network) {
+      return {
+        allow: true,
+        fetch: false,
+        local: true,
+        private: routing,
+        status: live,
+        url: classified.url,
+        reason: "local",
+        engine: false,
+        onion: false,
+      };
+    }
+    if (!routing) {
+      return {
+        allow: false,
+        fetch: false,
+        local: false,
+        private: false,
+        status: UNPRIVATE_UNLESS_TOR,
+        url: classified.url,
+        reason: "tor-down",
+        engine: false,
+        onion: classified.onion,
+      };
+    }
+    if (isTrackerHost(classified.host)) {
+      return {
+        allow: false,
+        fetch: false,
+        local: false,
+        private: true,
+        status: PRIVATE_VIA_TOR,
+        url: classified.url,
+        reason: "tracker-blocked",
+        engine: false,
+        onion: classified.onion,
+      };
+    }
+    var engine = !!(status && (status.engineProxied === true || status.isolatedTorWebView === true));
+    return {
+      allow: true,
+      fetch: true,
+      local: false,
+      private: true,
+      status: PRIVATE_VIA_TOR,
+      url: classified.url,
+      reason: classified.reason,
+      engine: engine,
+      onion: classified.onion,
+    };
+  }
+
+  return {
+    UNPRIVATE_UNLESS_TOR: UNPRIVATE_UNLESS_TOR,
+    PRIVATE_VIA_TOR: PRIVATE_VIA_TOR,
+    classifyUrl: classifyUrl,
+    decideNavigation: decideNavigation,
+    isOnionHost: isOnionHost,
+    isRouting: isRouting,
+  };
+});
+
+/* Rx Privacy Browser chrome. Fail closed: no network page unless Tor is routing. */
+(function () {
+  "use strict";
+  var gate = window.RxGate;
+  var UNPRIVATE = gate.UNPRIVATE_UNLESS_TOR;
+  var PRIVATE = gate.PRIVATE_VIA_TOR;
+  var seq = 1;
+  var tabs = [];
+  var activeId = 0;
+  var pollTimer = 0;
+
+  function boot() {
+    var el = document.getElementById("rx-boot-data");
+    try {
+      var parsed = JSON.parse(el ? el.textContent || "{}" : "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function current() {
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].id === activeId) return tabs[i];
+    }
+    return tabs[0];
+  }
+
+  function makeTab() {
+    return {
+      id: seq++,
+      url: "about:newtab",
+      title: "New Tab",
+      history: [],
+      forward: [],
+      network: false,
+    };
+  }
+
+  function paint(decision) {
+    var el = document.getElementById("rx-status");
+    var ok = decision && decision.private === true && decision.status === PRIVATE;
+    el.textContent = ok ? PRIVATE : UNPRIVATE;
+    document.body.classList.toggle("is-private", !!ok);
+  }
+
+  function forceUnprivate() {
+    paint({ private: false, status: UNPRIVATE });
+  }
+
+  function blankFrame() {
+    var frame = document.getElementById("view");
+    frame.hidden = true;
+    if (frame.getAttribute("src")) frame.removeAttribute("src");
+  }
+
+  function showNewTab() {
+    blankFrame();
+    var snap = document.getElementById("snapshot");
+    snap.hidden = true;
+    var panel = document.getElementById("panel");
+    panel.hidden = false;
+    panel.textContent = [
+      "Rx Privacy Browser",
+      "",
+      "Private new tab. Telemetry is off. Tracker blocking is on.",
+      "Traffic relay is Tor circuits only.",
+      "Restore Privacy VPN and Shear Privacy VPN do not carry this browser.",
+      "",
+      "The status line is the session state.",
+      "It reads " + UNPRIVATE + " until Tor is bootstrapped and a circuit is routing.",
+      "Clearnet and .onion are not fetched until then.",
+    ].join("\n");
+  }
+
+  function showBlocked(url) {
+    blankFrame();
+    var snap = document.getElementById("snapshot");
+    snap.hidden = true;
+    var panel = document.getElementById("panel");
+    panel.hidden = false;
+    forceUnprivate();
+    panel.textContent = [
+      UNPRIVATE,
+      "",
+      "Not fetched" + (url ? ": " + url : ""),
+      "Tor is not bootstrapped and routing. No VPN relay.",
+    ].join("\n");
+  }
+
+  function showSnapshot(page) {
+    blankFrame();
+    document.getElementById("panel").hidden = true;
+    var snap = document.getElementById("snapshot");
+    snap.hidden = false;
+    snap.textContent = [
+      page.status || PRIVATE,
+      page.url || "",
+      page.title || "",
+      page.onion ? "onion via tor" : "clearnet via tor",
+      "",
+      page.text || "",
+    ].join("\n");
+  }
+
+  function showEngine(url) {
+    document.getElementById("panel").hidden = true;
+    document.getElementById("snapshot").hidden = true;
+    var frame = document.getElementById("view");
+    frame.hidden = false;
+    frame.src = url;
+  }
+
+  function renderTabs() {
+    var bar = document.getElementById("tabs");
+    bar.textContent = "";
+    tabs.forEach(function (tab) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tab" + (tab.id === activeId ? " active" : "");
+      btn.textContent = (tab.title || "Tab").slice(0, 28);
+      btn.addEventListener("click", function () {
+        activeId = tab.id;
+        document.getElementById("url").value = tab.url;
+        renderTabs();
+        if (tab.network) {
+          go(tab.url, { replace: true, fromHistory: true });
+        } else {
+          showNewTab();
+        }
+      });
+      bar.appendChild(btn);
+    });
+    var add = document.createElement("button");
+    add.type = "button";
+    add.textContent = "+";
+    add.addEventListener("click", function () {
+      var tab = makeTab();
+      tabs.push(tab);
+      activeId = tab.id;
+      document.getElementById("url").value = tab.url;
+      renderTabs();
+      showNewTab();
+    });
+    bar.appendChild(add);
+    var close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.addEventListener("click", function () {
+      if (tabs.length === 1) {
+        var only = makeTab();
+        tabs = [only];
+        activeId = only.id;
+      } else {
+        var idx = 0;
+        for (var i = 0; i < tabs.length; i++) if (tabs[i].id === activeId) idx = i;
+        tabs.splice(idx, 1);
+        activeId = tabs[Math.min(idx, tabs.length - 1)].id;
+      }
+      document.getElementById("url").value = current().url;
+      renderTabs();
+      if (!current().network) showNewTab();
+      else go(current().url, { replace: true, fromHistory: true });
+    });
+    bar.appendChild(close);
+  }
+
+  async function hostStatus(base) {
+    if (!window.rxHost || typeof window.rxHost.status !== "function") return base;
+    try {
+      var host = await window.rxHost.status();
+      if (!host || typeof host !== "object") {
+        forceUnprivate();
+        return null;
+      }
+      if (host.vpnRelay === true) {
+        forceUnprivate();
+        return null;
+      }
+      var merged = Object.assign({}, base, host);
+      merged.engineProxied = base.engineProxied === true;
+      if (host.isolatedTorWebView === true) merged.isolatedTorWebView = true;
+      return merged;
+    } catch (e) {
+      forceUnprivate();
+      return null;
+    }
+  }
+
+  async function loadStatus() {
+    var info = boot();
+    var status;
+    try {
+      var res = await fetch("/rx/status", { cache: "no-store" });
+      if (!res.ok) throw new Error("status");
+      status = await res.json();
+    } catch (e) {
+      status = {
+        routing: false,
+        private: false,
+        bootstrapped: false,
+        bootstrapProgress: 0,
+        circuitEstablished: false,
+        vpnRelay: false,
+        status: UNPRIVATE,
+      };
+    }
+    status.engineProxied = info.engineProxied === true;
+    status.isolatedTorWebView = info.isolatedTorWebView === true;
+    if (window.rxHost && window.rxHost.isolatedTorWebView === true) {
+      status.isolatedTorWebView = true;
+    }
+    return hostStatus(status);
+  }
+
+  function remember(tab, url, title, network) {
+    if (tab.url && tab.url !== url) tab.history.push(tab.url);
+    tab.forward = [];
+    tab.url = url;
+    tab.title = title || tab.title;
+    tab.network = !!network;
+    document.getElementById("url").value = url;
+    renderTabs();
+  }
+
+  async function go(raw, opts) {
+    opts = opts || {};
+    var tab = current();
+    var status = await loadStatus();
+    if (!status) {
+      showBlocked(raw);
+      return false;
+    }
+    var decision = gate.decideNavigation(status, raw);
+    paint(decision);
+    if (!decision.allow || decision.fetch !== true) {
+      if (decision.local && decision.allow) {
+        if (!opts.replace && !opts.fromHistory) remember(tab, decision.url, "New Tab", false);
+        else {
+          tab.url = decision.url;
+          tab.network = false;
+          tab.title = "New Tab";
+          document.getElementById("url").value = decision.url;
+          renderTabs();
+        }
+        showNewTab();
+        return true;
+      }
+      if (decision.private === true && decision.status === PRIVATE) {
+        paint(decision);
+        blankFrame();
+        document.getElementById("snapshot").hidden = true;
+        var held = document.getElementById("panel");
+        held.hidden = false;
+        held.textContent = [PRIVATE, decision.reason || "blocked", decision.url || ""].join("\n");
+        return false;
+      }
+      showBlocked(decision.url || raw);
+      if (decision.reason === "tor-down") tab.network = false;
+      return false;
+    }
+    if (decision.engine && window.rxHost && typeof window.rxHost.navigate === "function") {
+      var hosted;
+      try {
+        hosted = await window.rxHost.navigate(decision.url);
+      } catch (e) {
+        showBlocked(decision.url);
+        return false;
+      }
+      if (!hosted || hosted.blocked || hosted.private !== true || hosted.status !== PRIVATE || hosted.vpnRelay === true) {
+        showBlocked(decision.url);
+        return false;
+      }
+      if (!opts.replace && !opts.fromHistory) remember(tab, decision.url, hosted.title || decision.url, true);
+      else {
+        tab.url = decision.url;
+        tab.network = true;
+        tab.title = hosted.title || tab.title;
+        renderTabs();
+      }
+      paint({ private: true, status: PRIVATE });
+      if (hosted.text) showSnapshot(hosted);
+      else showEngine(decision.url);
+      return true;
+    }
+    if (decision.engine && status.engineProxied === true) {
+      if (!opts.replace && !opts.fromHistory) remember(tab, decision.url, decision.url, true);
+      else {
+        tab.url = decision.url;
+        tab.network = true;
+        renderTabs();
+      }
+      paint({ private: true, status: PRIVATE });
+      showEngine(decision.url);
+      return true;
+    }
+    var page;
+    try {
+      var info = boot();
+      var res = await fetch("/rx/navigate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Rx-Token": info.token || "",
+        },
+        body: JSON.stringify({ url: decision.url }),
+      });
+      page = await res.json();
+    } catch (e) {
+      showBlocked(decision.url);
+      return false;
+    }
+    if (!page || page.private !== true || page.status !== PRIVATE || page.vpnRelay === true) {
+      showBlocked(decision.url || (page && page.url) || "");
+      return false;
+    }
+    if (page.blocked || page.fetch !== true) {
+      paint({ private: true, status: PRIVATE });
+      blankFrame();
+      document.getElementById("snapshot").hidden = true;
+      var refused = document.getElementById("panel");
+      refused.hidden = false;
+      refused.textContent = [PRIVATE, page.reason || "blocked", page.url || ""].join("\n");
+      return false;
+    }
+    if (!opts.replace && !opts.fromHistory) remember(tab, page.url || decision.url, page.title || page.url, true);
+    else {
+      tab.url = page.url || decision.url;
+      tab.title = page.title || tab.title;
+      tab.network = true;
+      document.getElementById("url").value = tab.url;
+      renderTabs();
+    }
+    paint({ private: true, status: PRIVATE });
+    showSnapshot(page);
+    return true;
+  }
+
+  async function refreshStatus() {
+    var status = await loadStatus();
+    if (!status) {
+      showBlocked(current().url);
+      return;
+    }
+    var decision = gate.decideNavigation(status, "about:newtab");
+    paint(decision);
+    var tab = current();
+    if (tab.network && decision.private !== true) {
+      showBlocked(tab.url);
+      tab.network = false;
+    }
+  }
+
+  async function back() {
+    var tab = current();
+    if (!tab.history.length) return;
+    var target = tab.history[tab.history.length - 1];
+    var previous = tab.url;
+    var ok = await go(target, { replace: true, fromHistory: true });
+    if (!ok) return;
+    tab.history.pop();
+    tab.forward.push(previous);
+  }
+
+  async function forward() {
+    var tab = current();
+    if (!tab.forward.length) return;
+    var target = tab.forward[tab.forward.length - 1];
+    var previous = tab.url;
+    var ok = await go(target, { replace: true, fromHistory: true });
+    if (!ok) return;
+    tab.forward.pop();
+    tab.history.push(previous);
+  }
+
+  function reload() {
+    go(current().url, { replace: true, fromHistory: true });
+  }
+
+  async function openEngine() {
+    var info = boot();
+    var data;
+    try {
+      var res = await fetch("/rx/engine", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Rx-Token": info.token || "",
+        },
+        body: "{}",
+      });
+      data = await res.json();
+    } catch (e) {
+      showBlocked(current().url);
+      return;
+    }
+    if (!data || data.private !== true || data.status !== PRIVATE || data.vpnRelay === true) {
+      showBlocked(current().url);
+      return;
+    }
+    paint({ private: true, status: PRIVATE });
+    if (data.launched !== true) {
+      blankFrame();
+      document.getElementById("snapshot").hidden = true;
+      var panel = document.getElementById("panel");
+      panel.hidden = false;
+      panel.textContent = PRIVATE + "\n\nTor engine did not start. Snapshot navigation still uses Tor.";
+    }
+  }
+
+  document.getElementById("go").addEventListener("click", function () {
+    go(document.getElementById("url").value);
+  });
+  document.getElementById("url").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") go(document.getElementById("url").value);
+  });
+  document.getElementById("back").addEventListener("click", back);
+  document.getElementById("forward").addEventListener("click", forward);
+  document.getElementById("reload").addEventListener("click", reload);
+  document.getElementById("engine").addEventListener("click", openEngine);
+
+  var first = makeTab();
+  tabs = [first];
+  activeId = first.id;
+  renderTabs();
+  showNewTab();
+  forceUnprivate();
+  refreshStatus();
+  pollTimer = window.setInterval(refreshStatus, 2000);
+})();
+
+  </script>
+</body>
+</html>

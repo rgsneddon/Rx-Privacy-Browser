@@ -30,8 +30,11 @@ class ExtensionInfo:
 
 class ExtensionRegistry:
     """
-    Extensions are permitted. Resolves and loads unpacked extension directories
-    (manifest.json), including the bundled Restore Privacy VPN package.
+    Resolves unpacked extension directories on disk.
+
+    The bundled Restore Privacy VPN package can still be inspected here.
+    It is not the Rx traffic relay and bootstrap does not load it.
+    Browsing uses Tor circuits only.
     """
 
     def __init__(self, repo_root: Optional[os.PathLike | str] = None) -> None:
