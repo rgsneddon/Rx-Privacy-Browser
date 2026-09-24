@@ -118,6 +118,39 @@ class TestSessionFence(unittest.TestCase):
         self.assertFalse(result.fetch)
         self.assertEqual(result.reason, "tor-fetch-failed")
 
+    def test_caption_and_partial_bootstrap_do_not_fetch(self):
+        def boom(*_a, **_k):
+            raise AssertionError("fetched")
+
+        quiet = FlagTor(True)
+        quiet.state.socks_listening = False
+        quiet.state.message = PRIVATE_VIA_TOR
+        session = BrowseSession(quiet, fetcher=boom)
+        result = session.navigate(ONION)
+        self.assertEqual(result.status, UNPRIVATE_UNLESS_TOR)
+        self.assertFalse(result.fetch)
+        self.assertFalse(result.private)
+        self.assertEqual(quiet.connects, [])
+        payload = session.status_payload()
+        self.assertEqual(payload["status"], UNPRIVATE_UNLESS_TOR)
+        self.assertEqual(payload["socksHost"], "127.0.0.1")
+        self.assertFalse(payload["socksListening"])
+
+        partial = FlagTor(True)
+        partial.state.bootstrap_progress = 99
+        partial.state.bootstrapped = False
+        held = BrowseSession(partial, fetcher=boom)
+        blocked = held.navigate("https://example.com/")
+        self.assertEqual(blocked.status, UNPRIVATE_UNLESS_TOR)
+        self.assertEqual(partial.connects, [])
+
+        remote = FlagTor(True)
+        remote.state.socks_host = "10.1.2.3"
+        away = BrowseSession(remote, fetcher=boom)
+        refused = away.navigate("https://example.com/")
+        self.assertEqual(refused.status, UNPRIVATE_UNLESS_TOR)
+        self.assertEqual(remote.connects, [])
+
     def test_local_new_tab_needs_no_tor(self):
         session = BrowseSession(null_tor())
         result = session.navigate("about:newtab")

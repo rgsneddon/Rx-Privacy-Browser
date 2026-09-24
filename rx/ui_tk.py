@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from rx.fence import UNPRIVATE_UNLESS_TOR
+from rx.fence import PRIVATE_VIA_TOR, UNPRIVATE_UNLESS_TOR
 from rx.shell import RxShell
 
 
@@ -118,10 +118,16 @@ def run_gui(shell: Optional[RxShell] = None) -> None:
         root.title(shell.window_title)
         last = shell.state.last_nav
         if last is not None and last.blocked:
-            write_body(
-                f"{last.status}\n\nNot fetched: {last.url or tab.url}\n"
-                "Tor is not bootstrapped and routing. No VPN relay.\n"
-            )
+            if last.private and last.status == PRIVATE_VIA_TOR and shell.session.private():
+                write_body(
+                    f"{PRIVATE_VIA_TOR}\n\nNot fetched: {last.url or tab.url}\n"
+                    f"{last.reason}\n"
+                )
+            else:
+                write_body(
+                    f"{UNPRIVATE_UNLESS_TOR}\n\nNot fetched: {last.url or tab.url}\n"
+                    "No VPN relay.\n"
+                )
             return
         if last is not None and last.fetch and last.url == tab.url:
             write_body(

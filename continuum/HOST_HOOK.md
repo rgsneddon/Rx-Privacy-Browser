@@ -28,6 +28,8 @@ window.rxHost = {
       circuitEstablished: Boolean, // GETINFO status/circuit-established == 1
       vpnRelay: false,             // must stay false; 1080 is not Tor
       isolatedTorWebView: true,
+      socksListening: Boolean,     // loopback Tor SOCKS is accepting connections
+      socksHost: "127.0.0.1",      // or "::1"; anything else is unprivate
       socksPort: 9050,             // loopback Tor SOCKS, never the VPN port
       status: routing ? "private via tor" : "unprivate unless tor",
     };
@@ -49,8 +51,10 @@ window.rxHost = {
   spend seed, no Shear password prompt.
 - Every socket from that WebView goes through Tor (embedded Tor or Arti, or a
   local `tor` SOCKS on 127.0.0.1). Remote DNS. Onion names stay hostnames.
-- Until bootstrap is 100 and a circuit is established, show exactly
-  `unprivate unless tor` and do not fetch clearnet or .onion.
+- Until bootstrap is 100, a circuit is established, and loopback SOCKS is
+  listening, show exactly `unprivate unless tor` and do not fetch clearnet
+  or .onion. The page gate treats a missing `socksListening` / `socksHost`
+  as unprivate. The status string alone does not permit a fetch.
 - Do not attach Restore Privacy VPN, Shear Privacy VPN, or the wallet residual
   TUN. `vpnRelay` must be false. Do not proxy via port 1080.
 - Do not mint SHE. Do not preinstall the chip. Do not mark the gallery Ready

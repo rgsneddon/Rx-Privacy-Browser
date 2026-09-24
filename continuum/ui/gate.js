@@ -215,9 +215,18 @@
   }
 
   function isRouting(status) {
+    // A caption is not a circuit. Private only with loopback SOCKS up,
+    // bootstrap 100, and a confirmed circuit. VPN port 1080 never qualifies.
     if (!status || typeof status !== "object") return false;
     if (status.vpnRelay === true) return false;
-    if (status.socksPort === VPN_PROXY_PORT) return false;
+    if (typeof status.status === "string" && status.status !== PRIVATE_VIA_TOR) return false;
+    var host = String(status.socksHost || "");
+    if (host !== "127.0.0.1" && host !== "::1") return false;
+    if (status.socksListening !== true) return false;
+    if (typeof status.socksPort !== "number" && typeof status.socksPort !== "string") return false;
+    var port = Number(status.socksPort);
+    if (!isFinite(port) || port !== Math.floor(port) || port < 1 || port > 65535) return false;
+    if (port === VPN_PROXY_PORT) return false;
     var progress = Number(status.bootstrapProgress);
     return (
       status.routing === true &&

@@ -11,8 +11,10 @@ Traffic for this browser is **Tor circuits only**. Clearnet and `.onion` are fet
 The session is private only when Tor is bootstrapped (`PROGRESS=100`) **and** a circuit is established.
 
 - Tor down, or SOCKS open without a confirmed circuit: navigation to clearnet and `.onion` is **not fetched**. The status line is exactly `unprivate unless tor`.
+- A status caption of `private via tor` does not unlock navigation. The session and the page gate both require a listening loopback SOCKS port (`127.0.0.1` or `::1`), bootstrap 100, and `circuit-established`. If any of those is missing, the status stays `unprivate unless tor` and nothing is fetched.
 - Tor bootstrapped and routing: status is `private via tor`. Clearnet goes out through Tor. `.onion` is connected by hostname (no local DNS).
 - Port `1080` (the bundled VPN extension proxy) is rejected. `vpnRelay` is false.
+- The Tor engine may frame a remote page only after a live circuit check, and only in the process launched with that proxy. Other clients keep `frame-src 'none'`.
 
 Local `about:newtab` still opens when Tor is down. It does not make the session private.
 
@@ -95,7 +97,7 @@ Opens the loopback bridge at `http://127.0.0.1:8844/`. Tabs, address bar, back, 
 
 - Tor down: the status line is `unprivate unless tor`. Go does not fetch.
 - Tor up, snapshot mode: the bridge fetches the page through Tor and shows text. Page scripts are not executed in the unproxied shell, so they cannot bypass Tor.
-- **Open Tor engine** (only after a circuit exists) starts an isolated Chrome or Firefox profile with Tor SOCKS, remote DNS, extensions disabled, and WebRTC non-proxied UDP disabled. That window can load full pages, including `.onion`, inside the proxied process. It does not load the VPN extension.
+- **Open Tor engine** (only after a circuit exists) starts an isolated Chrome or Firefox profile with Tor SOCKS, remote DNS, extensions disabled, and WebRTC non-proxied UDP disabled. That window can load full pages, including `.onion`, inside the proxied process. The bridge enables remote frames only when that process presents its engine mark and Tor is still routing. It does not load the VPN extension.
 
 ```bash
 python launch_rx.py --tk       # Tk shell, same fail-closed gate, no system browser

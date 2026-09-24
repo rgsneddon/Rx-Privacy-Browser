@@ -17,6 +17,12 @@ BOOT_DEFAULT = '{"token":"","engineProxied":false,"isolatedTorWebView":false}'
 BRIDGE_HOST = "127.0.0.1"
 
 
+def new_engine_mark() -> str:
+    """Capability for the proxied engine process. Letters only, so it cannot be a port."""
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    return "rxe" + "".join(secrets.choice(alphabet) for _ in range(32))
+
+
 def render_index(html: str, *, token: str, engine: bool) -> str:
     boot = json.dumps(
         {"token": token, "engineProxied": bool(engine), "isolatedTorWebView": False},
@@ -75,6 +81,7 @@ class BridgeServer(ThreadingHTTPServer):
         self.session = session
         self.token = secrets.token_urlsafe(24)
         self.engine_nonce = secrets.token_urlsafe(24)
+        self.engine_mark = new_engine_mark()
         self.launcher = launcher
         self.launch_count = 0
 
@@ -120,7 +127,22 @@ class Handler(BaseHTTPRequestHandler):
             return
         query = parse_qs(parts.query)
         nonce = (query.get("engine") or [""])[0]
-        engine = bool(nonce) and secrets.compare_digest(nonce, self.server.engine_nonce)
+        nonce_ok = (
+            bool(nonce)
+            and len(nonce) == len(self.server.engine_nonce)
+            and secrets.compare_digest(nonce, self.server.engine_nonce)
+        )
+        ua = self.headers.get("User-Agent") or ""
+        mark = self.server.engine_mark
+        self.server.session.refresh()
+        # Remote frames are enabled only for the proxied engine process, and
+        # only while Tor is routing. Any other client keeps frame-src 'none'.
+        engine = (
+            nonce_ok
+            and bool(mark)
+            and mark in ua
+            and routing_allowed(self.server.session.tor.state)
+        )
         html = render_index(read_browser(), token=self.server.token, engine=engine)
         self._raw(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
@@ -158,11 +180,17 @@ class Handler(BaseHTTPRequestHandler):
         host, port = self.server.server_address[:2]
         ui = f"http://{host}:{port}/?engine={self.server.engine_nonce}"
         socks_port = int(session.tor.state.socks_port)
+        mark = self.server.engine_mark
         try:
             if self.server.launcher is not None:
-                self.server.launcher(ui, socks_port)
+                self.server.launcher(ui, socks_port, mark)
             else:
-                launch_isolated_engine(ui_url=ui, socks_port=socks_port, tor=session.tor)
+                launch_isolated_engine(
+                    ui_url=ui,
+                    socks_port=socks_port,
+                    tor=session.tor,
+                    engine_mark=mark,
+                )
         except Exception:
             payload = result_payload(
                 session.navigate("about:newtab")
@@ -236,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
                 ui_url=f"http://{host}:{port}/?engine={httpd.engine_nonce}",
                 socks_port=int(tor.state.socks_port),
                 tor=tor,
+                engine_mark=httpd.engine_mark,
             )
             print("engine=started")
         except Exception as exc:

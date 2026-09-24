@@ -67,6 +67,7 @@ class BrowseSession:
             "bootstrapProgress": int(state.bootstrap_progress or 0),
             "circuitEstablished": bool(state.circuit_established),
             "socksListening": bool(state.socks_listening),
+            "socksHost": str(state.socks_host or ""),
             "socksPort": int(state.socks_port or 0),
             "vpnRelay": False if routing else bool(state.vpn_relay),
             "relay": TRAFFIC_RELAY,

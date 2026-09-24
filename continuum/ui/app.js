@@ -111,6 +111,17 @@
     frame.src = url;
   }
 
+  async function bridgeStatus() {
+    try {
+      var res = await fetch("/rx/status", { cache: "no-store" });
+      if (!res.ok) return null;
+      var body = await res.json();
+      return body && typeof body === "object" ? body : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function renderTabs() {
     var bar = document.getElementById("tabs");
     bar.textContent = "";
@@ -284,6 +295,11 @@
       return true;
     }
     if (decision.engine && status.engineProxied === true) {
+      var proof = await bridgeStatus();
+      if (!gate.isRouting(proof)) {
+        showBlocked(decision.url);
+        return false;
+      }
       if (!opts.replace && !opts.fromHistory) remember(tab, decision.url, decision.url, true);
       else {
         tab.url = decision.url;

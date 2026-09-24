@@ -134,10 +134,42 @@ class TestBridge(unittest.TestCase):
         self.assertEqual(payload["status"], PRIVATE_VIA_TOR)
         self.assertTrue(payload["launched"])
         self.assertEqual(len(launched), 1)
-        ui, socks_port = launched[0]
+        ui, socks_port, mark = launched[0]
         self.assertIn("engine=", ui)
         self.assertNotEqual(socks_port, 1080)
+        self.assertEqual(mark, httpd.engine_mark)
+        self.assertNotIn("1080", mark)
         self.assertEqual(httpd.launch_count, 1)
+
+    def test_engine_document_stays_unframed_without_proxied_mark(self):
+        httpd = self._start(BrowseSession(FlagTor(True)))
+        code, page = self._get(httpd, "/?engine=" + httpd.engine_nonce)
+        self.assertEqual(code, 200)
+        text = page.decode()
+        self.assertNotIn('"engineProxied":true', text)
+        self.assertIn("frame-src 'none'", text)
+        host, port = httpd.server_address[:2]
+        req = Request(
+            f"http://{host}:{port}/?engine={httpd.engine_nonce}",
+            headers={"User-Agent": f"RxPrivacyBrowser/0.2 (Tor; {httpd.engine_mark})"},
+        )
+        with urlopen(req, timeout=3) as res:
+            armed = res.read().decode()
+        self.assertIn('"engineProxied":true', armed)
+        self.assertIn("frame-src http: https:", armed)
+        self.assertNotIn(httpd.engine_mark, armed)
+
+    def test_engine_document_refuses_framing_when_tor_down(self):
+        httpd = self._start(BrowseSession(null_tor()))
+        host, port = httpd.server_address[:2]
+        req = Request(
+            f"http://{host}:{port}/?engine={httpd.engine_nonce}",
+            headers={"User-Agent": f"RxPrivacyBrowser/0.2 (Tor; {httpd.engine_mark})"},
+        )
+        with urlopen(req, timeout=3) as res:
+            text = res.read().decode()
+        self.assertNotIn('"engineProxied":true', text)
+        self.assertIn("frame-src 'none'", text)
 
 
 if __name__ == "__main__":

@@ -32,18 +32,6 @@ assert.strictEqual(blocked.private, false);
 assert.strictEqual(blocked.status, "unprivate unless tor");
 assert.strictEqual(blocked.reason, "tor-down");
 
-const vpn = Object.assign({}, down, {
-  routing: true,
-  private: true,
-  bootstrapped: true,
-  bootstrapProgress: 100,
-  circuitEstablished: true,
-  vpnRelay: true,
-});
-const vpnNav = gate.decideNavigation(vpn, "https://example.com/");
-assert.strictEqual(vpnNav.fetch, false);
-assert.strictEqual(vpnNav.status, "unprivate unless tor");
-
 const up = {
   routing: true,
   private: true,
@@ -51,10 +39,16 @@ const up = {
   bootstrapProgress: 100,
   circuitEstablished: true,
   vpnRelay: false,
+  socksListening: true,
+  socksHost: "127.0.0.1",
   socksPort: 9050,
   engineProxied: false,
   isolatedTorWebView: false,
 };
+const vpn = Object.assign({}, up, { vpnRelay: true });
+const vpnNav = gate.decideNavigation(vpn, "https://example.com/");
+assert.strictEqual(vpnNav.fetch, false);
+assert.strictEqual(vpnNav.status, "unprivate unless tor");
 const allowed = gate.decideNavigation(up, onion);
 assert.strictEqual(allowed.allow, true);
 assert.strictEqual(allowed.fetch, true);
@@ -65,5 +59,36 @@ assert.strictEqual(allowed.engine, false);
 const port = gate.decideNavigation(Object.assign({}, up, { socksPort: 1080 }), onion);
 assert.strictEqual(port.fetch, false);
 assert.strictEqual(port.status, "unprivate unless tor");
+
+const caption = Object.assign({}, down, { status: "private via tor" });
+const captionNav = gate.decideNavigation(caption, "https://example.com/");
+assert.strictEqual(captionNav.fetch, false);
+assert.strictEqual(captionNav.private, false);
+assert.strictEqual(captionNav.status, "unprivate unless tor");
+assert.strictEqual(captionNav.engine, false);
+
+const quietSocks = gate.decideNavigation(Object.assign({}, up, { socksListening: false }), onion);
+assert.strictEqual(quietSocks.fetch, false);
+assert.strictEqual(quietSocks.status, "unprivate unless tor");
+
+const remoteSocks = gate.decideNavigation(Object.assign({}, up, { socksHost: "10.0.0.1" }), onion);
+assert.strictEqual(remoteSocks.fetch, false);
+assert.strictEqual(remoteSocks.status, "unprivate unless tor");
+
+const partial = gate.decideNavigation(Object.assign({}, up, { bootstrapProgress: 99, bootstrapped: false }), onion);
+assert.strictEqual(partial.fetch, false);
+assert.strictEqual(partial.status, "unprivate unless tor");
+
+const noCircuit = gate.decideNavigation(Object.assign({}, up, { circuitEstablished: false }), onion);
+assert.strictEqual(noCircuit.fetch, false);
+assert.strictEqual(noCircuit.status, "unprivate unless tor");
+
+const contradicted = gate.decideNavigation(Object.assign({}, up, { status: "unprivate unless tor" }), onion);
+assert.strictEqual(contradicted.fetch, false);
+assert.strictEqual(contradicted.status, "unprivate unless tor");
+
+const loopback6 = gate.decideNavigation(Object.assign({}, up, { socksHost: "::1" }), onion);
+assert.strictEqual(loopback6.fetch, true);
+assert.strictEqual(loopback6.status, "private via tor");
 
 console.log("gate ok");

@@ -14,8 +14,18 @@ from rx.fence import TorUnavailable, reject_vpn_proxy_port, routing_allowed
 from rx.isolate import assert_isolated, state_dir
 
 
-def firefox_user_js(socks_port: int) -> str:
+def _engine_mark(mark: str) -> str:
+    text = str(mark or "")
+    if not text:
+        return ""
+    if not text.isascii() or not text.isalnum() or "1080" in text or "shewall" in text.lower():
+        raise RuntimeError("engine mark failed the relay fence")
+    return text
+
+
+def firefox_user_js(socks_port: int, engine_mark: str = "") -> str:
     reject_vpn_proxy_port(socks_port)
+    mark = _engine_mark(engine_mark)
     prefs = [
         'user_pref("network.proxy.type", 1);',
         'user_pref("network.proxy.socks", "127.0.0.1");',
@@ -39,6 +49,10 @@ def firefox_user_js(socks_port: int) -> str:
         'user_pref("extensions.enabledScopes", 0);',
         'user_pref("browser.shell.checkDefaultBrowser", false);',
     ]
+    if mark:
+        prefs.append(
+            f'user_pref("general.useragent.override", "RxPrivacyBrowser/0.2 (Tor; {mark})");'
+        )
     text = "\n".join(prefs) + "\n"
     if "1080" in text or "shewall" in text.lower():
         raise RuntimeError("firefox profile failed the relay fence")
@@ -51,16 +65,21 @@ def engine_command(
     ui_url: str,
     socks_port: int,
     user_data_dir: Path,
+    engine_mark: str = "",
 ) -> list[str]:
     reject_vpn_proxy_port(socks_port)
+    mark = _engine_mark(engine_mark)
     profile = assert_isolated(user_data_dir)
     name = Path(binary).name.lower()
     if "firefox" in name:
         profile.mkdir(parents=True, exist_ok=True)
-        (profile / "user.js").write_text(firefox_user_js(socks_port), encoding="utf-8")
+        (profile / "user.js").write_text(
+            firefox_user_js(socks_port, engine_mark=mark),
+            encoding="utf-8",
+        )
         return [binary, "-profile", str(profile), "-no-remote", "-new-instance", ui_url]
     profile.mkdir(parents=True, exist_ok=True)
-    return [
+    cmd = [
         binary,
         f"--user-data-dir={profile}",
         "--no-first-run",
@@ -74,9 +93,11 @@ def engine_command(
         f"--proxy-server=socks5://127.0.0.1:{int(socks_port)}",
         "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1",
         "--proxy-bypass-list=127.0.0.1;localhost",
-        "--new-window",
-        ui_url,
     ]
+    if mark:
+        cmd.append(f"--user-agent=RxPrivacyBrowser/0.2 (Tor; {mark})")
+    cmd.extend(["--new-window", ui_url])
+    return cmd
 
 
 def find_engine() -> str | None:
@@ -93,7 +114,13 @@ def find_engine() -> str | None:
     return None
 
 
-def launch_isolated_engine(*, ui_url: str, socks_port: int, tor=None) -> subprocess.Popen:
+def launch_isolated_engine(
+    *,
+    ui_url: str,
+    socks_port: int,
+    tor=None,
+    engine_mark: str = "",
+) -> subprocess.Popen:
     if tor is not None and not routing_allowed(tor.state):
         raise TorUnavailable()
     reject_vpn_proxy_port(socks_port)
@@ -101,7 +128,13 @@ def launch_isolated_engine(*, ui_url: str, socks_port: int, tor=None) -> subproc
     if not binary:
         raise RuntimeError("no browser engine on PATH")
     profile = assert_isolated(state_dir() / "engine-profile")
-    cmd = engine_command(binary, ui_url=ui_url, socks_port=socks_port, user_data_dir=profile)
+    cmd = engine_command(
+        binary,
+        ui_url=ui_url,
+        socks_port=socks_port,
+        user_data_dir=profile,
+        engine_mark=engine_mark,
+    )
     return subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,

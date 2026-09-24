@@ -26,6 +26,14 @@ class TestEngine(unittest.TestCase):
         self.assertIn("--force-webrtc-ip-handling-policy=disable_non_proxied_udp", joined)
         self.assertNotIn("1080", joined)
         self.assertNotIn("shewall", joined.lower())
+        marked = engine_command(
+            "/usr/bin/google-chrome",
+            ui_url="http://127.0.0.1:8844/?engine=abc",
+            socks_port=9070,
+            user_data_dir=profile,
+            engine_mark="rxemark",
+        )
+        self.assertIn("--user-agent=RxPrivacyBrowser/0.2 (Tor; rxemark)", marked)
 
     def test_firefox_remote_dns(self):
         text = firefox_user_js(9070)
