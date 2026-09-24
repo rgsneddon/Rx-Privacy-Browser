@@ -1,4 +1,8 @@
-"""Extension permit / load-path resolution for the Rx browser shell."""
+"""Extension permit / load-path resolution for the Rx browser shell.
+
+The on-disk Restore Privacy VPN package is not required to start Rx and is
+not a traffic relay. Bootstrap must not call ``load_bundled_vpn``.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +12,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from rx.fence import UNPRIVATE_UNLESS_TOR, VpnRelayForbidden
 
-# Repo-relative default for the bundled Restore Privacy VPN extension
+
+# Repo-relative path of the dormant package. Not a bootstrap dependency.
 BUNDLED_VPN_REL = Path("extensions") / "restore-privacy-vpn"
-REQUIRED_VPN_VERSION = "3.3.3"
+# Catalog version of the dormant on-disk package. Not consulted by bootstrap.
+ON_DISK_VPN_CATALOG_VERSION = "3.3.3"
 
 
 @dataclass
@@ -32,16 +39,16 @@ class ExtensionRegistry:
     """
     Resolves unpacked extension directories on disk.
 
-    The bundled Restore Privacy VPN package can still be inspected here.
-    It is not the Rx traffic relay and bootstrap does not load it.
-    Browsing uses Tor circuits only.
+    Extensions are off for this vortice. The bundled VPN package may sit on
+    disk for inventory, but loading it is refused. Browsing uses Tor only.
     """
 
     def __init__(self, repo_root: Optional[os.PathLike | str] = None) -> None:
         self.repo_root = Path(repo_root or _default_repo_root()).resolve()
         self.extensions_dir = self.repo_root / "extensions"
         self._loaded: Dict[str, ExtensionInfo] = {}
-        self.extensions_permitted: bool = True
+        # Tor path: do not permit extension load. Bootstrap does not flip this on.
+        self.extensions_permitted: bool = False
 
     def bundled_vpn_path(self) -> Path:
         return (self.repo_root / BUNDLED_VPN_REL).resolve()
@@ -65,10 +72,20 @@ class ExtensionRegistry:
             return under2
         raise FileNotFoundError(f"extension path not found: {name_or_path}")
 
+    def _is_bundled_vpn(self, path: Path) -> bool:
+        if path.name == "restore-privacy-vpn":
+            return True
+        try:
+            return path.resolve() == self.bundled_vpn_path()
+        except OSError:
+            return False
+
     def load_unpacked(self, name_or_path: str, enable: bool = True) -> ExtensionInfo:
         if not self.extensions_permitted:
             raise PermissionError("browser extensions are not permitted in this profile")
         path = self.resolve_extension_path(name_or_path)
+        if self._is_bundled_vpn(path):
+            raise VpnRelayForbidden(UNPRIVATE_UNLESS_TOR)
         manifest_path = path / "manifest.json"
         if not manifest_path.is_file():
             raise FileNotFoundError(f"manifest.json missing in {path}")
@@ -103,15 +120,8 @@ class ExtensionRegistry:
         return self._loaded.get(ext_id)
 
     def load_bundled_vpn(self) -> ExtensionInfo:
-        """Load/enable the shipped Restore Privacy VPN extension (version pin 3.3.3)."""
-        info = self.load_unpacked(str(BUNDLED_VPN_REL), enable=True)
-        pin = self.read_vpn_version_pin()
-        if info.version != REQUIRED_VPN_VERSION and pin != REQUIRED_VPN_VERSION:
-            raise RuntimeError(
-                f"bundled VPN version pin expected {REQUIRED_VPN_VERSION}, "
-                f"got manifest={info.version!r} pin={pin!r}"
-            )
-        return info
+        """Refuse the dormant VPN package. It is not the Rx relay and not required."""
+        raise VpnRelayForbidden(UNPRIVATE_UNLESS_TOR)
 
     def read_vpn_version_pin(self) -> str:
         vpn = self.bundled_vpn_path()

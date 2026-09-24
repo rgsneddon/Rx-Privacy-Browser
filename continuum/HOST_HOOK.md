@@ -65,6 +65,8 @@ window.rxHost = {
 ### Out of scope for that PR
 
 - Invent / pool / reconstruct plates.
+- Raw peer RPC, a Send bypass, or any path that spends from shewall.
+- Loading Restore Privacy VPN 3.3.3. Rx bootstrap does not require that extension.
 - Replacing the Shear Privacy VPN vortice.
 - Gallery Ready on vortices.shear.digital.
 """

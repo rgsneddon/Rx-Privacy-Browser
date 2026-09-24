@@ -2,7 +2,9 @@
 
 **Rx Privacy Browser** is a Continuum vortice: a browser you install by pasting a `vort1.` deploy key. It is not preinstalled in shear-wallet or shear-testnet.
 
-Traffic for this browser is **Tor circuits only**. Clearnet and `.onion` are fetched through a Tor SOCKS proxy with remote DNS. The bundled Restore Privacy VPN extension is **not** the relay, and this vortice does not route user traffic through Shear Privacy VPN. That VPN stays a separate vortice.
+Traffic for this browser is **Tor circuits only**. Clearnet and `.onion` are fetched through a Tor SOCKS proxy with remote DNS. Typed `.onion` names are not sent to the system resolver.
+
+Bootstrap does **not** require the bundled Restore Privacy VPN extension. The shell starts with extensions disabled, and loading that package is refused. It is not the relay. Shear Privacy VPN stays a separate vortice. The Continuum host hook, when added, is status plus Tor SOCKS only: no peer RPC, no Send bypass, no invent or pool edits.
 
 **Gallery:** not Ready. Do not mark this Ready on vortices.shear.digital until an onion smoke is not-refuted.
 

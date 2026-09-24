@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rx.extensions import ExtensionRegistry, ExtensionInfo
-from rx.fence import TRAFFIC_RELAY
+from rx.fence import TRAFFIC_RELAY, UNPRIVATE_UNLESS_TOR, VpnRelayForbidden
 from rx.privacy import PrivacyDefaults, default_privacy
 from rx.session import BrowseSession, NavResult
 from rx.tabs import TabManager, Tab
@@ -37,8 +37,8 @@ class RxShell:
     """
     From-scratch Rx browser shell.
 
-    Owns tab session, privacy defaults, and extension permit/load for the
-    bundled Restore Privacy VPN package. GUI hosts (tk/webview) consume this.
+    Owns the tab session and Tor gate. The bundled VPN extension is not
+    loaded and is not required for bootstrap. GUI hosts consume this.
     """
 
     def __init__(
@@ -52,7 +52,7 @@ class RxShell:
         self.privacy.assert_fence()
         self.tabs = TabManager(start_url=self.privacy.start_url)
         self.extensions = ExtensionRegistry(self.repo_root)
-        # The on-disk VPN package is not loaded and is not the traffic relay.
+        self.extensions.extensions_permitted = False
         self.session = BrowseSession(null_tor() if tor is None else tor)
         self.state = ShellState(
             privacy=self.privacy,
@@ -72,8 +72,10 @@ class RxShell:
         return self.privacy.window_title(title)
 
     def bootstrap(self) -> ShellState:
-        """Start the shell. Tor is the only relay; the VPN extension stays unloaded."""
+        """Start the shell. Does not look for or load the bundled VPN extension."""
         self.privacy.assert_fence()
+        self.extensions.extensions_permitted = False
+        self.extensions._loaded.clear()
         self.state.bundled_vpn = None
         self.state.vpn_relay = False
         self.state.started = True
@@ -140,7 +142,10 @@ class RxShell:
         return result
 
     def enable_extension(self, ext_id: str) -> ExtensionInfo:
-        return self.extensions.enable(ext_id)
+        """Extensions are not the traffic path. The bundled VPN cannot be enabled."""
+        if ext_id == "restore-privacy-vpn" or "vpn" in ext_id.lower():
+            raise VpnRelayForbidden(UNPRIVATE_UNLESS_TOR)
+        raise PermissionError("browser extensions are not permitted on the Tor path")
 
     def snapshot(self) -> Dict[str, Any]:
         active = self.tabs.active_tab

@@ -11,17 +11,18 @@ sys.path.insert(0, str(ROOT))
 
 from rx.extensions import (  # noqa: E402
     ExtensionRegistry,
-    REQUIRED_VPN_VERSION,
+    ON_DISK_VPN_CATALOG_VERSION,
     BUNDLED_VPN_REL,
 )
+from rx.fence import VpnRelayForbidden  # noqa: E402
 
 
 class TestExtensionRegistry(unittest.TestCase):
     def setUp(self):
         self.reg = ExtensionRegistry(ROOT)
 
-    def test_extensions_permitted_by_default(self):
-        self.assertTrue(self.reg.extensions_permitted)
+    def test_extensions_not_permitted_on_tor_path(self):
+        self.assertFalse(self.reg.extensions_permitted)
 
     def test_bundled_vpn_path_exists(self):
         path = self.reg.bundled_vpn_path()
@@ -32,32 +33,23 @@ class TestExtensionRegistry(unittest.TestCase):
         missing = self.reg.required_extension_files_present()
         self.assertEqual(missing, [], f"missing files: {missing}")
 
-    def test_version_pin_3_3_3(self):
+    def test_on_disk_catalog_version_is_not_a_bootstrap_pin(self):
         pin = self.reg.read_vpn_version_pin()
-        self.assertEqual(pin, REQUIRED_VPN_VERSION)
-        self.assertEqual(REQUIRED_VPN_VERSION, "3.3.3")
+        self.assertEqual(pin, ON_DISK_VPN_CATALOG_VERSION)
+        self.assertEqual(ON_DISK_VPN_CATALOG_VERSION, "3.3.3")
+        self.assertEqual(self.reg.list_loaded(), [])
 
-    def test_load_bundled_vpn(self):
-        info = self.reg.load_bundled_vpn()
-        self.assertEqual(info.version, "3.3.3")
-        self.assertTrue(info.enabled)
-        self.assertIn("Restore Privacy", info.name)
-        self.assertTrue(info.path.is_dir())
-        # Real VPN entry points, not stubs
-        bg = (info.path / "background.js").read_text(encoding="utf-8")
-        self.assertIn("RptBrowserVpnCore", bg)
-        core = (info.path / "lib" / "vpn_core.js").read_text(encoding="utf-8")
-        self.assertIn("enableVpn", core)
-        self.assertIn("browserScopeOnly", core)
+    def test_load_bundled_vpn_is_refused(self):
+        with self.assertRaises(VpnRelayForbidden) as caught:
+            self.reg.load_bundled_vpn()
+        self.assertEqual(str(caught.exception), "unprivate unless tor")
+        self.assertEqual(self.reg.list_loaded(), [])
 
-    def test_resolve_and_enable_disable(self):
-        path = self.reg.resolve_extension_path(str(BUNDLED_VPN_REL))
-        self.assertTrue(path.is_dir())
-        info = self.reg.load_unpacked(str(BUNDLED_VPN_REL))
-        self.reg.disable(info.id)
-        self.assertFalse(self.reg.get(info.id).enabled)
-        self.reg.enable(info.id)
-        self.assertTrue(self.reg.get(info.id).enabled)
+    def test_permitting_extensions_still_refuses_vpn_package(self):
+        self.reg.extensions_permitted = True
+        with self.assertRaises(VpnRelayForbidden):
+            self.reg.load_unpacked(str(BUNDLED_VPN_REL))
+        self.assertEqual(self.reg.list_loaded(), [])
 
     def test_permit_gate(self):
         self.reg.extensions_permitted = False

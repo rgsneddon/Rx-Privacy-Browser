@@ -1,8 +1,9 @@
 # Restore Privacy VPN — browser extension (catalog 3.3.3)
 
-**Not the Rx Privacy Browser relay.** The Continuum Rx vortice does not load this
-extension and does not send clearnet or .onion traffic through it. Shear Privacy
-VPN remains a separate vortice. Rx browsing is Tor circuits only.
+**Not the Rx Privacy Browser relay.** Rx bootstrap does not require this
+package and `load_bundled_vpn` refuses it. The Continuum Rx vortice does not
+load this extension and does not send clearnet or .onion traffic through it.
+Shear Privacy VPN remains a separate vortice. Rx browsing is Tor circuits only.
 
 Chromium **Manifest V3** extension for **browser-scoped** Connect / Disconnect.
 This package is dormant inside Rx. Do not point the Rx bridge or engine at its proxy.

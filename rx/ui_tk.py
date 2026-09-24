@@ -1,4 +1,8 @@
-"""Tk chrome for Rx. Navigation is fail-closed and never uses the system browser."""
+"""Tk chrome for Rx. Navigation is fail-closed and never uses the system browser.
+
+Bootstrap does not load the bundled Restore Privacy VPN extension. There is
+no VPN button and no VPN relay requirement on this window.
+"""
 
 from __future__ import annotations
 

@@ -28,10 +28,14 @@ def socks5_connect(sock: socket.socket, host: str, port: int) -> None:
     greeting = _read_exact(sock, 2)
     if greeting != b"\x05\x00":
         raise SocksError("socks auth refused")
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
+    # Typed .onion names stay hostnames. Never hand them to the system resolver.
+    if host.lower().rstrip(".").endswith(".onion"):
         ip = None
+    else:
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            ip = None
     port_b = int(port).to_bytes(2, "big")
     if isinstance(ip, ipaddress.IPv4Address):
         req = b"\x05\x01\x00\x01" + ip.packed + port_b
