@@ -1,9 +1,10 @@
 """OPEN-HOST for shear-testnet — the browser body cannot run Tor inside the chip alone.
 
 Continuum tip `c02f787` pastes a vort1 key, fetches the origin, and shows a chip.
-It has no in-wallet WebView and no Tor SOCKS. The host change lives on
-shear-testnet branch `cursor/rx-isolated-tor-host-d7ca`, not in this repo's
-invent or pool trees (those are not edited).
+It has no in-wallet WebView and no Tor SOCKS. Apply
+`continuum/host/0001-isolate-rx-chip-behind-tor-socks.patch` on shear-testnet
+at `c02f787` as branch `cursor/rx-isolated-tor-host-d7ca`. This agent cannot
+push to that repo. The patch does not edit invent or pool.
 
 Do not land inside Rx.
 
