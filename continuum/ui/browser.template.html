@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Rx Privacy Browser</title>
+  <style>
+__RX_CSS__
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Rx Privacy Browser</div>
+    <div class="fence">Tor only · VPN relay off</div>
+    <div id="rx-status" role="status">unprivate unless tor</div>
+  </header>
+  <div id="tabs"></div>
+  <div id="nav">
+    <button id="back" type="button">Back</button>
+    <button id="forward" type="button">Forward</button>
+    <button id="reload" type="button">Reload</button>
+    <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="https://example.com or http://….onion" aria-label="Address">
+    <button id="go" type="button">Go</button>
+    <button id="engine" type="button">Open Tor engine</button>
+  </div>
+  <div id="stage">
+    <div id="panel"></div>
+    <pre id="snapshot" hidden></pre>
+    <iframe id="view" hidden title="Tor page" referrerpolicy="no-referrer" sandbox="allow-scripts allow-forms allow-popups"></iframe>
+  </div>
+  <noscript><p>unprivate unless tor</p></noscript>
+  <script id="rx-boot-data" type="application/json">{"token":"","engineProxied":false,"isolatedTorWebView":false}</script>
+  <script>
+__RX_GATE__
+__RX_APP__
+  </script>
+</body>
+</html>

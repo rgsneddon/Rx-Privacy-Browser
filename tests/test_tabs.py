@@ -44,6 +44,15 @@ class TestTabManager(unittest.TestCase):
         self.assertEqual(tm.active_tab.url, "https://restoreprivacy.online/")
         self.assertTrue(len(tm.active_tab.history) >= 1)
 
+    def test_back_forward(self):
+        tm = TabManager(start_url="about:newtab")
+        tm.navigate_active("https://example.com/")
+        tm.navigate_active("https://example.org/")
+        tm.go_back()
+        self.assertEqual(tm.active_tab.url, "https://example.com/")
+        tm.go_forward()
+        self.assertEqual(tm.active_tab.url, "https://example.org/")
+
 
 if __name__ == "__main__":
     unittest.main()

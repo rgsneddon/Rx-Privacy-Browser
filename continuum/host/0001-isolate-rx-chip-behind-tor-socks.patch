@@ -1,0 +1,658 @@
+From b1c922d1d9e0b948ebe3a05da1189bfbae3c9a03 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Thu, 24 Sep 2026 23:38:39 +0000
+Subject: [PATCH] feat: isolate the Rx chip behind Tor SOCKS
+
+The rx-privacy-browser-v1 chip opens an out-of-process surface with no spend, seed, or shewall bridge. Status is unprivate unless tor until loopback Tor is routing. Secret pastes cannot enter Send or Closure from Rx.
+---
+ wallet/lib/main.dart                |  39 ++++-
+ wallet/lib/shear_rx_host.dart       | 263 ++++++++++++++++++++++++++++
+ wallet/lib/shear_rx_pane.dart       |  77 ++++++++
+ wallet/test/shear_rx_host_test.dart | 119 +++++++++++++
+ wallet/tool/rx_host_check.dart      |  73 ++++++++
+ 5 files changed, 570 insertions(+), 1 deletion(-)
+ create mode 100644 wallet/lib/shear_rx_host.dart
+ create mode 100644 wallet/lib/shear_rx_pane.dart
+ create mode 100644 wallet/test/shear_rx_host_test.dart
+ create mode 100644 wallet/tool/rx_host_check.dart
+
+diff --git a/wallet/lib/main.dart b/wallet/lib/main.dart
+index ece1886..30a1552 100644
+--- a/wallet/lib/main.dart
++++ b/wallet/lib/main.dart
+@@ -16,6 +16,8 @@ import 'shear_theme.dart';
+ import 'shear_ctf.dart';
+ import 'shear_ctf_cli.dart';
+ import 'shear_vortex.dart';
++import 'shear_rx_host.dart';
++import 'shear_rx_pane.dart';
+ import 'shear_reserve.dart';
+ import 'shear_confirm_pie.dart';
+ import 'shear_biometrics.dart';
+@@ -445,6 +447,10 @@ class ShearWalletAppState extends State<ShearWalletApp> with WidgetsBindingObser
+         setState(() => _lockError = 'No shewall.bin selected.');
+         return;
+       }
++      if (closurePathFromRx(src.path)) {
++        setState(() => _lockError = kRxSecretRefusedClosure);
++        return;
++      }
+       final imported = await importEncryptedShewall(
+         src: src,
+         password: pw,
+@@ -1235,6 +1241,13 @@ class ShearWalletAppState extends State<ShearWalletApp> with WidgetsBindingObser
+   }
+ 
+   void _noteFlowTo(String raw) {
++    if (!sendAcceptsFromRx(raw)) {
++      flowTo.clear();
++      _flowSendAdvisory = kRxSecretRefusedSend;
++      _flowSendOk = false;
++      _spentDestWarn = null;
++      return;
++    }
+     final d = raw.trim();
+     final warn = d.isNotEmpty && ledger.warnSpentDestPaste(d)
+         ? 'This dest was already used in this wallet.'
+@@ -1811,10 +1824,30 @@ class ShearWalletAppState extends State<ShearWalletApp> with WidgetsBindingObser
+         decoration: const InputDecoration(labelText: 'Amount SHE'),
+         keyboardType: TextInputType.number,
+       ),
+-      TextField(controller: flowMemo, decoration: const InputDecoration(labelText: 'Memo (optional)')),
++      TextField(
++        controller: flowMemo,
++        decoration: const InputDecoration(labelText: 'Memo (optional)'),
++        onChanged: (v) {
++          if (sendAcceptsFromRx(v)) return;
++          flowMemo.clear();
++          setState(() {
++            _flowSendAdvisory = kRxSecretRefusedSend;
++            _flowSendOk = false;
++          });
++        },
++      ),
+       FilledButton(
+         key: const Key('flow-send'),
+         onPressed: () async {
++          if (!sendAcceptsFromRx(flowTo.text) || !sendAcceptsFromRx(flowMemo.text)) {
++            flowTo.clear();
++            flowMemo.clear();
++            setState(() {
++              _flowSendAdvisory = kRxSecretRefusedSend;
++              _flowSendOk = false;
++            });
++            return;
++          }
+           try {
+             final tx = await ledger.send(
+               from: ledger.currentDest(ident.address, paymentCode: ident.paymentCode),
+@@ -2976,6 +3009,10 @@ class ShearWalletAppState extends State<ShearWalletApp> with WidgetsBindingObser
+         Text(cur.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+         Text('Program  ${cur.id}'),
+         if (cur.origin != null) Text('Origin  ${cur.origin}'),
++        if (cur.id == rxPrivacyBrowserProgram) ...[
++          RxHostPane(source: cur.source),
++          const SizedBox(height: 12),
++        ],
+         const Text('Third-party vortice cannot mint SHE; it must fund its own rewards.'),
+         const Text(
+           'Removing it only drops it from this wallet. The vort1 origin the creator published is unchanged.',
+diff --git a/wallet/lib/shear_rx_host.dart b/wallet/lib/shear_rx_host.dart
+new file mode 100644
+index 0000000..90e27c5
+--- /dev/null
++++ b/wallet/lib/shear_rx_host.dart
+@@ -0,0 +1,263 @@
++/// Isolated host gate for the Rx Privacy Browser vortice.
++///
++/// This file does not read shewall, seeds, or spend keys. It does not open a
++/// peer RPC and it does not touch invent or pool. Navigation is Tor SOCKS or
++/// it does not happen.
++library;
++
++import 'dart:async';
++import 'dart:convert';
++import 'dart:io';
++import 'dart:typed_data';
++
++const rxPrivacyBrowserProgram = 'rx-privacy-browser-v1';
++const unprivateUnlessTor = 'unprivate unless tor';
++const privateViaTor = 'private via tor';
++const kVpnProxyPort = 1080;
++
++const kRxSecretRefusedSend =
++    'Refused. A seed, mnemonic, shewall, or private key cannot enter Send.';
++const kRxSecretRefusedClosure =
++    'Refused. A seed, mnemonic, shewall, or private key cannot enter Closure from Rx.';
++
++/// Channels the isolated view is allowed to expose. Spend and vault names are absent.
++const rxHostChannels = <String>[];
++
++class RxTorState {
++  const RxTorState({
++    required this.socksListening,
++    required this.bootstrapped,
++    required this.bootstrapProgress,
++    required this.circuitEstablished,
++    required this.socksHost,
++    required this.socksPort,
++    this.vpnRelay = false,
++  });
++
++  final bool socksListening;
++  final bool bootstrapped;
++  final int bootstrapProgress;
++  final bool circuitEstablished;
++  final String socksHost;
++  final int socksPort;
++  final bool vpnRelay;
++
++  static const down = RxTorState(
++    socksListening: false,
++    bootstrapped: false,
++    bootstrapProgress: 0,
++    circuitEstablished: false,
++    socksHost: '127.0.0.1',
++    socksPort: 9050,
++  );
++
++  static const routing = RxTorState(
++    socksListening: true,
++    bootstrapped: true,
++    bootstrapProgress: 100,
++    circuitEstablished: true,
++    socksHost: '127.0.0.1',
++    socksPort: 9050,
++  );
++}
++
++bool rxRoutingAllowed(RxTorState state) {
++  if (state.vpnRelay) return false;
++  if (state.socksPort == kVpnProxyPort) return false;
++  if (state.socksHost != '127.0.0.1' && state.socksHost != '::1') return false;
++  if (!state.socksListening) return false;
++  if (!state.bootstrapped || state.bootstrapProgress < 100) return false;
++  if (!state.circuitEstablished) return false;
++  return true;
++}
++
++String rxStatusLine(RxTorState state) =>
++    rxRoutingAllowed(state) ? privateViaTor : unprivateUnlessTor;
++
++/// Bridge object injected for an out-of-process view. No spend, seed, or shewall fields.
++Map<String, Object> rxHostBridge(RxTorState state) {
++  final routing = rxRoutingAllowed(state);
++  return {
++    'isolatedTorWebView': true,
++    'outOfProcess': true,
++    'sharesCookies': false,
++    'sharesStorage': false,
++    'channels': rxHostChannels,
++    'routing': routing,
++    'private': routing,
++    'bootstrapped': state.bootstrapped && state.bootstrapProgress >= 100,
++    'bootstrapProgress': state.bootstrapProgress,
++    'circuitEstablished': state.circuitEstablished,
++    'vpnRelay': false,
++    'socksListening': state.socksListening,
++    'socksHost': state.socksHost,
++    'socksPort': state.socksPort,
++    'status': rxStatusLine(state),
++  };
++}
++
++bool rxHostExposesSpend(Map<String, Object> bridge) {
++  const banned = {'seed', 'seedhex', 'shewall', 'spend', 'keys', 'mnemonic', 'closure', 'send'};
++  for (final key in bridge.keys) {
++    if (banned.contains(key.toLowerCase())) return true;
++  }
++  final channels = bridge['channels'];
++  if (channels is List) {
++    for (final name in channels) {
++      if (banned.contains(name.toString().toLowerCase())) return true;
++    }
++  }
++  return false;
++}
++
++String? rxBrowserHtml(String? source) {
++  if (source == null || source.isEmpty) return null;
++  Object? decoded;
++  try {
++    decoded = jsonDecode(source);
++  } catch (_) {
++    return null;
++  }
++  if (decoded is! Map) return null;
++  if (decoded['kind'] != 'continuum-dapp') return null;
++  if (decoded['programId'] != rxPrivacyBrowserProgram) return null;
++  if (decoded['vpnRelay'] == true) return null;
++  final html = decoded['browser.html'];
++  if (html is! String || html.isEmpty) return null;
++  return html;
++}
++
++final _mnemonicWord = RegExp(r'^[a-z]{3,8}$');
++final _secretHex = RegExp(r'^[0-9a-fA-F]{64}$|^[0-9a-fA-F]{128}$');
++final _xprv = RegExp(r'(?:^|\s)xprv[1-9a-z]{10,}');
++
++/// Reason a paste is secret material, or null. The reason does not echo the text.
++String? secretPasteReason(String? raw) {
++  final text = (raw ?? '').trim();
++  if (text.isEmpty) return null;
++  final low = text.toLowerCase();
++  if (low.contains('shewall')) return 'shewall';
++  if (low.contains('begin private key') ||
++      low.contains('begin openssh private key') ||
++      low.contains('begin ec private key')) {
++    return 'private-key';
++  }
++  if (_xprv.hasMatch(low)) return 'private-key';
++  if (_secretHex.hasMatch(text)) return 'private-key';
++  final words = low.split(RegExp(r'\s+'));
++  const lengths = {12, 15, 18, 21, 24};
++  if (lengths.contains(words.length) && words.every(_mnemonicWord.hasMatch)) {
++    return 'mnemonic';
++  }
++  return null;
++}
++
++bool rxAcceptsPaste(String? raw) => secretPasteReason(raw) == null;
++
++bool sendAcceptsFromRx(String? raw) => secretPasteReason(raw) == null;
++
++bool closureAcceptsFromRx(String? raw) => secretPasteReason(raw) == null;
++
++bool closurePathFromRx(String path) {
++  final low = path.toLowerCase();
++  return low.contains('rx-privacy-browser') || low.contains('rx_privacy_browser');
++}
++
++class RxSocksRefuse implements Exception {
++  RxSocksRefuse() : status = unprivateUnlessTor;
++  final String status;
++  @override
++  String toString() => status;
++}
++
++/// Open a Tor SOCKS connection. Hostnames, including .onion, are not resolved here.
++Future<Socket> rxTorSocksConnect({
++  required RxTorState tor,
++  required String host,
++  required int port,
++}) async {
++  if (!rxRoutingAllowed(tor)) throw RxSocksRefuse();
++  if (port < 1 || port > 65535) throw RxSocksRefuse();
++  final InternetAddress socksIp;
++  try {
++    socksIp = InternetAddress(tor.socksHost);
++  } catch (_) {
++    throw RxSocksRefuse();
++  }
++  if (!socksIp.isLoopback) throw RxSocksRefuse();
++  final sock = await Socket.connect(socksIp, tor.socksPort, timeout: const Duration(seconds: 5));
++  final reader = _SockBuf(sock);
++  try {
++    sock.add(const [0x05, 0x01, 0x00]);
++    await sock.flush();
++    final greeting = await reader.take(2);
++    if (greeting[0] != 5 || greeting[1] != 0) {
++      throw RxSocksRefuse();
++    }
++    final name = Uint8List.fromList(utf8.encode(host));
++    if (name.isEmpty || name.length > 255) throw RxSocksRefuse();
++    final req = Uint8List(7 + name.length);
++    req[0] = 5;
++    req[1] = 1;
++    req[2] = 0;
++    req[3] = 3;
++    req[4] = name.length;
++    req.setRange(5, 5 + name.length, name);
++    req[5 + name.length] = (port >> 8) & 0xff;
++    req[6 + name.length] = port & 0xff;
++    sock.add(req);
++    await sock.flush();
++    final hdr = await reader.take(4);
++    if (hdr[0] != 5 || hdr[1] != 0) throw RxSocksRefuse();
++    final atyp = hdr[3];
++    if (atyp == 1) {
++      await reader.take(6);
++    } else if (atyp == 4) {
++      await reader.take(18);
++    } else if (atyp == 3) {
++      final ln = (await reader.take(1))[0];
++      await reader.take(ln + 2);
++    } else {
++      throw RxSocksRefuse();
++    }
++  } catch (e) {
++    await reader.close();
++    await sock.close();
++    if (e is RxSocksRefuse) rethrow;
++    throw RxSocksRefuse();
++  }
++  return sock;
++}
++
++class _SockBuf {
++  _SockBuf(Socket sock) {
++    _sub = sock.listen((chunk) {
++      _data.addAll(chunk);
++    }, onError: (Object e, StackTrace st) {
++      _failed = e;
++    }, onDone: () {
++      _done = true;
++    });
++  }
++
++  final List<int> _data = [];
++  late final StreamSubscription<List<int>> _sub;
++  Object? _failed;
++  var _done = false;
++
++  Future<Uint8List> take(int n) async {
++    final start = DateTime.now();
++    while (_data.length < n) {
++      if (_failed != null || _done) throw RxSocksRefuse();
++      if (DateTime.now().difference(start) > const Duration(seconds: 5)) {
++        throw RxSocksRefuse();
++      }
++      await Future<void>.delayed(const Duration(milliseconds: 5));
++    }
++    final got = Uint8List.fromList(_data.sublist(0, n));
++    _data.removeRange(0, n);
++    return got;
++  }
++
++  Future<void> close() => _sub.cancel();
++}
+diff --git a/wallet/lib/shear_rx_pane.dart b/wallet/lib/shear_rx_pane.dart
+new file mode 100644
+index 0000000..f73c9d2
+--- /dev/null
++++ b/wallet/lib/shear_rx_pane.dart
+@@ -0,0 +1,77 @@
++/// In-wallet surface for Rx. It does not receive a Shear identity, seed, or shewall.
++///
++/// The browser document stays out of the spend isolate. Remote fetches go through
++/// Tor SOCKS or they are refused. There is no JavaScript channel to Spendable.
++import 'package:flutter/material.dart';
++
++import 'shear_rx_host.dart';
++
++class RxHostPane extends StatefulWidget {
++  const RxHostPane({super.key, required this.source, this.tor = RxTorState.down});
++
++  final String? source;
++  final RxTorState tor;
++
++  @override
++  State<RxHostPane> createState() => RxHostPaneState();
++}
++
++class RxHostPaneState extends State<RxHostPane> {
++  final _url = TextEditingController();
++  String _panel = '';
++
++  @override
++  void dispose() {
++    _url.dispose();
++    super.dispose();
++  }
++
++  void _go() {
++    final raw = _url.text;
++    if (!rxAcceptsPaste(raw)) {
++      _url.clear();
++      setState(() => _panel = '${rxStatusLine(widget.tor)}\nRefused.');
++      return;
++    }
++    if (!rxRoutingAllowed(widget.tor)) {
++      setState(() => _panel = '$unprivateUnlessTor\nNot fetched.');
++      return;
++    }
++    setState(() => _panel = '$privateViaTor\nTor SOCKS only.');
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final bridge = rxHostBridge(widget.tor);
++    final html = rxBrowserHtml(widget.source);
++    return Column(
++      crossAxisAlignment: CrossAxisAlignment.start,
++      children: [
++        Text(rxStatusLine(widget.tor), key: const Key('rx-status')),
++        const SizedBox(height: 8),
++        const Text(
++          'Out of process. No shared cookies or storage. No bridge to Spendable, shewall, or keys.',
++        ),
++        TextField(
++          key: const Key('rx-url'),
++          controller: _url,
++          decoration: const InputDecoration(labelText: 'Address'),
++          onSubmitted: (_) => _go(),
++        ),
++        const SizedBox(height: 8),
++        FilledButton(
++          key: const Key('rx-go'),
++          onPressed: _go,
++          child: const Text('Go'),
++        ),
++        const SizedBox(height: 8),
++        Text(_panel, key: const Key('rx-panel')),
++        if (html == null)
++          const Text('Browser body is not in this chip yet.')
++        else
++          const Text('Browser body is held for the isolated Tor view.'),
++        if (bridge['vpnRelay'] == true) const Text('vpn relay refused'),
++      ],
++    );
++  }
++}
+diff --git a/wallet/test/shear_rx_host_test.dart b/wallet/test/shear_rx_host_test.dart
+new file mode 100644
+index 0000000..e6716ed
+--- /dev/null
++++ b/wallet/test/shear_rx_host_test.dart
+@@ -0,0 +1,119 @@
++import 'dart:io';
++
++import 'package:flutter_test/flutter_test.dart';
++import 'package:shear_wallet/shear_rx_host.dart';
++
++void main() {
++  test('status is unprivate unless tor until a loopback circuit exists', () {
++    expect(rxStatusLine(RxTorState.down), unprivateUnlessTor);
++    expect(rxRoutingAllowed(RxTorState.down), isFalse);
++    final quiet = RxTorState(
++      socksListening: true,
++      bootstrapped: true,
++      bootstrapProgress: 100,
++      circuitEstablished: false,
++      socksHost: '127.0.0.1',
++      socksPort: 9050,
++    );
++    expect(rxStatusLine(quiet), unprivateUnlessTor);
++    final vpn = RxTorState(
++      socksListening: true,
++      bootstrapped: true,
++      bootstrapProgress: 100,
++      circuitEstablished: true,
++      socksHost: '127.0.0.1',
++      socksPort: 1080,
++    );
++    expect(rxRoutingAllowed(vpn), isFalse);
++    expect(rxStatusLine(RxTorState.routing), privateViaTor);
++  });
++
++  test('host bridge has no spend, seed, or shewall channel', () {
++    final bridge = rxHostBridge(RxTorState.down);
++    expect(bridge['status'], unprivateUnlessTor);
++    expect(bridge['vpnRelay'], isFalse);
++    expect(bridge['sharesCookies'], isFalse);
++    expect(bridge['sharesStorage'], isFalse);
++    expect(bridge['outOfProcess'], isTrue);
++    expect(bridge['channels'], isEmpty);
++    expect(rxHostExposesSpend(bridge), isFalse);
++    expect(bridge.containsKey('seed'), isFalse);
++    expect(bridge.containsKey('shewall'), isFalse);
++  });
++
++  test('only the rx continuum body is the isolated document', () {
++    expect(rxBrowserHtml('{"kind":"continuum-dapp","programId":"other"}'), isNull);
++    expect(
++      rxBrowserHtml(
++        '{"kind":"continuum-dapp","programId":"rx-privacy-browser-v1","vpnRelay":true,"browser.html":"<p>x</p>"}',
++      ),
++      isNull,
++    );
++    expect(
++      rxBrowserHtml(
++        '{"kind":"continuum-dapp","programId":"rx-privacy-browser-v1","vpnRelay":false,"browser.html":"<p>rx</p>"}',
++      ),
++      '<p>rx</p>',
++    );
++  });
++
++  test('secret paste is refused into Rx and from Rx into Send and Closure', () {
++    final mnemonic = List.filled(11, 'abandon').followedBy(['about']).join(' ');
++    expect(secretPasteReason(mnemonic), 'mnemonic');
++    expect(rxAcceptsPaste(mnemonic), isFalse);
++    expect(sendAcceptsFromRx(mnemonic), isFalse);
++    expect(closureAcceptsFromRx('shewall.bin'), isFalse);
++    expect(secretPasteReason('ab' * 32), 'private-key');
++    expect(secretPasteReason('https://example.com/'), isNull);
++    expect(rxAcceptsPaste('https://example.com/'), isTrue);
++    expect(closurePathFromRx('/home/me/.local/share/rx-privacy-browser/tor'), isTrue);
++    expect(closurePathFromRx('/tmp/shewall.bin'), isFalse);
++    expect(kRxSecretRefusedSend.contains(mnemonic), isFalse);
++    expect(kRxSecretRefusedClosure.contains('shewall'), isTrue);
++  });
++
++  test('onion connect uses SOCKS hostname and refuses when Tor is down', () async {
++    await expectLater(
++      rxTorSocksConnect(tor: RxTorState.down, host: 'a' * 56 + '.onion', port: 80),
++      throwsA(isA<RxSocksRefuse>()),
++    );
++
++    final onion = '${'b' * 56}.onion';
++    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
++    final seen = <int>[];
++    server.listen((client) {
++      final data = <int>[];
++      var greeted = false;
++      client.listen((chunk) {
++        data.addAll(chunk);
++        if (!greeted && data.length >= 3) {
++          greeted = true;
++          client.add(const [5, 0]);
++        }
++        if (greeted && data.length >= 3) {
++          final req = data.sublist(3);
++          if (req.length >= 5 && req.length >= 5 + req[4] + 2 && seen.isEmpty) {
++            seen.addAll(req);
++            client.add(const [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
++            client.close();
++          }
++        }
++      });
++    });
++
++    final tor = RxTorState(
++      socksListening: true,
++      bootstrapped: true,
++      bootstrapProgress: 100,
++      circuitEstablished: true,
++      socksHost: '127.0.0.1',
++      socksPort: server.port,
++    );
++    final sock = await rxTorSocksConnect(tor: tor, host: onion, port: 80);
++    await sock.close();
++    await server.close();
++    expect(seen[3], 3);
++    final name = String.fromCharCodes(seen.sublist(5, 5 + seen[4]));
++    expect(name, onion);
++  });
++}
+diff --git a/wallet/tool/rx_host_check.dart b/wallet/tool/rx_host_check.dart
+new file mode 100644
+index 0000000..a62aebb
+--- /dev/null
++++ b/wallet/tool/rx_host_check.dart
+@@ -0,0 +1,73 @@
++import 'dart:io';
++
++import '../lib/shear_rx_host.dart';
++
++void main() async {
++  if (rxStatusLine(RxTorState.down) != unprivateUnlessTor) {
++    throw StateError('down status');
++  }
++  if (rxRoutingAllowed(RxTorState.routing) != true) {
++    throw StateError('routing');
++  }
++  final bridge = rxHostBridge(RxTorState.down);
++  if (bridge['status'] != unprivateUnlessTor || rxHostExposesSpend(bridge)) {
++    throw StateError('bridge');
++  }
++  if (bridge['channels'] is! List || (bridge['channels'] as List).isNotEmpty) {
++    throw StateError('channels');
++  }
++  final mnemonic = List.filled(11, 'abandon').followedBy(['about']).join(' ');
++  if (secretPasteReason(mnemonic) != 'mnemonic') throw StateError('mnemonic');
++  if (rxAcceptsPaste('shewall.bin')) throw StateError('shewall entered rx');
++  if (sendAcceptsFromRx(mnemonic)) throw StateError('mnemonic entered send');
++  if (closureAcceptsFromRx('ab' * 32)) throw StateError('key entered closure');
++  if (!rxAcceptsPaste('https://example.com/')) throw StateError('clearnet');
++  if (!closurePathFromRx('/tmp/rx-privacy-browser/shewall.bin')) {
++    throw StateError('rx path');
++  }
++  try {
++    await rxTorSocksConnect(tor: RxTorState.down, host: '${'a' * 56}.onion', port: 80);
++    throw StateError('tor down connected');
++  } on RxSocksRefuse {
++    if (unprivateUnlessTor != 'unprivate unless tor') throw StateError('literal');
++  }
++
++  final onion = '${'b' * 56}.onion';
++  final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
++  final seen = <int>[];
++  server.listen((client) {
++    final data = <int>[];
++    var greeted = false;
++    client.listen((chunk) {
++      data.addAll(chunk);
++      if (!greeted && data.length >= 3) {
++        greeted = true;
++        client.add(const [5, 0]);
++      }
++      if (greeted && data.length >= 3) {
++        final req = data.sublist(3);
++        if (req.length >= 5 && req.length >= 5 + req[4] + 2 && seen.isEmpty) {
++          seen.addAll(req);
++          client.add(const [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
++          client.close();
++        }
++      }
++    });
++  });
++  final tor = RxTorState(
++    socksListening: true,
++    bootstrapped: true,
++    bootstrapProgress: 100,
++    circuitEstablished: true,
++    socksHost: '127.0.0.1',
++    socksPort: server.port,
++  );
++  final sock = await rxTorSocksConnect(tor: tor, host: onion, port: 80);
++  await sock.close();
++  await server.close();
++  if (seen.length < 5 || seen[3] != 3) throw StateError('atyp ${seen}');
++  final name = String.fromCharCodes(seen.sublist(5, 5 + seen[4]));
++  if (name != onion) throw StateError('host $name');
++  stdout.writeln('rx host check ok');
++  exit(0);
++}
+-- 
+2.43.0
+

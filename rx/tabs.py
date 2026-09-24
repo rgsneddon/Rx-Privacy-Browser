@@ -15,6 +15,7 @@ class Tab:
     title: str
     url: str
     history: List[str] = field(default_factory=list)
+    forward: List[str] = field(default_factory=list)
 
     def navigate(self, url: str) -> None:
         url = (url or "").strip()
@@ -22,6 +23,7 @@ class Tab:
             raise ValueError("url required")
         if self.url:
             self.history.append(self.url)
+        self.forward.clear()
         self.url = url
         if not self.title or self.title in ("New Tab", "about:blank"):
             self.title = _title_from_url(url)
@@ -97,6 +99,24 @@ class TabManager:
             new_idx = min(idx, len(self._tabs) - 1)
             self._active_id = self._tabs[new_idx].id
         return closed
+
+    def go_back(self) -> Tab:
+        tab = self.active_tab
+        if tab is None or not tab.history:
+            raise IndexError("no history")
+        tab.forward.append(tab.url)
+        tab.url = tab.history.pop()
+        tab.title = _title_from_url(tab.url)
+        return tab
+
+    def go_forward(self) -> Tab:
+        tab = self.active_tab
+        if tab is None or not tab.forward:
+            raise IndexError("no forward")
+        tab.history.append(tab.url)
+        tab.url = tab.forward.pop()
+        tab.title = _title_from_url(tab.url)
+        return tab
 
     def navigate_active(self, url: str) -> Tab:
         tab = self.active_tab

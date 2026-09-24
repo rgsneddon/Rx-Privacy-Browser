@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, Any, List
+from dataclasses import dataclass
+from typing import Dict, Any
+
+from rx.fence import TRAFFIC_RELAY, UNPRIVATE_UNLESS_TOR, VPN_RELAY
+from rx.policy import classify_url
 
 
 @dataclass(frozen=True)
@@ -30,8 +33,11 @@ class PrivacyDefaults:
     telemetry_enabled: bool = False
     analytics_endpoints: tuple = ()
     third_party_cookies_default: bool = False
-    # Prefer HTTPS when user omits scheme
+    # Prefer HTTPS when user omits scheme (bare .onion stays http)
     prefer_https: bool = True
+    traffic_relay: str = TRAFFIC_RELAY
+    vpn_relay: bool = VPN_RELAY
+    status_unprivate: str = UNPRIVATE_UNLESS_TOR
 
     def window_title(self, page_title: str | None = None) -> str:
         base = f"{self.product_name} — {self.umbrella} Browser"
@@ -43,7 +49,9 @@ class PrivacyDefaults:
         return (
             f"{self.product_name} Privacy Browser "
             f"(under {self.umbrella}) · telemetry=off · "
-            f"tracker_blocking={self.tracker_blocking} · start={self.start_url}"
+            f"tracker_blocking={self.tracker_blocking} · "
+            f"relay={self.traffic_relay} · vpn_relay={str(self.vpn_relay).lower()} · "
+            f"start={self.start_url}"
         )
 
     def as_dict(self) -> Dict[str, Any]:
@@ -59,35 +67,44 @@ class PrivacyDefaults:
             "analytics_endpoints": list(self.analytics_endpoints),
             "third_party_cookies_default": self.third_party_cookies_default,
             "prefer_https": self.prefer_https,
+            "traffic_relay": self.traffic_relay,
+            "vpn_relay": self.vpn_relay,
+            "status_unprivate": self.status_unprivate,
         }
 
-    def normalize_url(self, raw: str) -> str:
-        """Normalize address-bar input using privacy-oriented scheme preference."""
-        s = (raw or "").strip()
-        if not s:
-            return self.start_url
-        lower = s.lower()
-        if lower.startswith("about:") or lower.startswith("file:"):
-            return s
-        if lower.startswith("http://") or lower.startswith("https://"):
-            return s
-        if "://" in s:
-            return s
-        # Bare host / search-ish: prefer HTTPS, never inject a telemetry host
-        if " " in s or "." not in s:
-            # Local new-tab search placeholder (no third-party search product hardwired)
-            from urllib.parse import quote_plus
+    def navigate(self, raw: str) -> str:
+        """Tor gate for every shell navigation. VPN is not required and is not a relay.
 
-            return f"about:search?q={quote_plus(s)}"
-        if self.prefer_https:
-            return f"https://{s}"
-        return f"http://{s}"
+        Returns the raw address-bar text. The session still classifies it and
+        refuses a fetch unless Tor is routing.
+        """
+        self.assert_fence()
+        if self.vpn_relay or self.traffic_relay != "tor":
+            raise AssertionError("VPN relay is forbidden")
+        return raw
+
+    def normalize_url(self, raw: str) -> str:
+        """Normalize address-bar input. Unsafe schemes collapse to the new tab."""
+        self.navigate(raw)
+        got = classify_url(raw, prefer_https=self.prefer_https)
+        if not got.ok:
+            return self.start_url
+        return got.url
 
     def assert_no_telemetry(self) -> None:
         if self.telemetry_enabled:
             raise AssertionError("telemetry must be disabled in Rx privacy defaults")
         if self.analytics_endpoints:
             raise AssertionError("analytics_endpoints must be empty in Rx shell")
+
+    def assert_fence(self) -> None:
+        self.assert_no_telemetry()
+        if self.vpn_relay:
+            raise AssertionError("VPN relay is forbidden")
+        if self.traffic_relay != "tor":
+            raise AssertionError("traffic relay must be tor")
+        if self.status_unprivate != UNPRIVATE_UNLESS_TOR:
+            raise AssertionError("status literal drifted")
 
 
 def default_privacy() -> PrivacyDefaults:

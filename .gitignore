@@ -9,3 +9,4 @@ venv/
 *.log
 .DS_Store
 Thumbs.db
+tests/.mint-spec.json

@@ -52,6 +52,21 @@ test("disableVpn clears proxy config and disconnects", function () {
   assert.strictEqual(core.isConnected(off), false);
 });
 
+test("enableVpn refuses to relay Rx browser traffic on port 1080", function () {
+  var s = core.enableVpn(core.defaultState(), {
+    host: "127.0.0.1",
+    port: 1080,
+    scheme: "socks5",
+    forRxBrowser: true,
+  });
+  assert.strictEqual(core.rxBrowserRelayRefused({ forRxBrowser: true }), true);
+  assert.strictEqual(s.status, "error");
+  assert.strictEqual(s.proxyConfig, null);
+  assert.strictEqual(s.error, "unprivate unless tor");
+  assert.strictEqual(s.rxBrowserRelay, false);
+  assert.strictEqual(core.isConnected(s), false);
+});
+
 test("invalid port yields error status without proxy", function () {
   var s = core.enableVpn(null, { host: "127.0.0.1", port: 0 });
   assert.strictEqual(s.status, "error");
