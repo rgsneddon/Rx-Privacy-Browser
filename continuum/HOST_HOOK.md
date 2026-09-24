@@ -1,4 +1,11 @@
-"""Follow-up for shear-testnet — do not land inside Rx.
+"""OPEN-HOST for shear-testnet — the browser body cannot run Tor inside the chip alone.
+
+Continuum tip `c02f787` pastes a vort1 key, fetches the origin, and shows a chip.
+It has no in-wallet WebView and no Tor SOCKS. The host change lives on
+shear-testnet branch `cursor/rx-isolated-tor-host-d7ca`, not in this repo's
+invent or pool trees (those are not edited).
+
+Do not land inside Rx.
 
 Continuum today stores a pasted vortice `source` and shows only name, program id,
 and origin (`wallet/lib/main.dart` `_vortex`). `parseVorticeSource` exists in

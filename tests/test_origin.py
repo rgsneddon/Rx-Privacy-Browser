@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # sha256 bundle for EXAMPLE_ORIGIN + the committed origin bytes.
 # Recompute with: python -m rx.mint --origin <EXAMPLE_ORIGIN>
-GOLDEN_EXAMPLE_BUNDLE = "1fc98c56c26b553e1c94d3a46feb08d8888f28473085640ab17fa82275f506cc"
+GOLDEN_EXAMPLE_BUNDLE = "476d75136a64c34f5f522cb481160f9efa625995a7a66c84262197befe0ce543"
 
 
 class TestOrigin(unittest.TestCase):

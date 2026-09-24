@@ -151,6 +151,21 @@ class TestSessionFence(unittest.TestCase):
         self.assertEqual(refused.status, UNPRIVATE_UNLESS_TOR)
         self.assertEqual(remote.connects, [])
 
+    def test_secret_paste_is_not_fetched_or_echoed(self):
+        session = BrowseSession(null_tor(), fetcher=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("fetched")))
+        mnemonic = " ".join(["abandon"] * 11 + ["about"])
+        for raw in (mnemonic, "shewall.bin", "ab" * 32, "-----BEGIN PRIVATE KEY-----\nMII\n"):
+            result = session.navigate(raw)
+            self.assertEqual(result.status, UNPRIVATE_UNLESS_TOR)
+            self.assertEqual(result.reason, "secret-refused")
+            self.assertEqual(result.url, "")
+            self.assertFalse(result.fetch)
+            self.assertNotIn(raw, result.reason)
+            self.assertNotIn("abandon", result.url)
+        clear = session.navigate("https://example.com/")
+        self.assertEqual(clear.reason, "tor-down")
+        self.assertNotEqual(clear.reason, "secret-refused")
+
     def test_local_new_tab_needs_no_tor(self):
         session = BrowseSession(null_tor())
         result = session.navigate("about:newtab")

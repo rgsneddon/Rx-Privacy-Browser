@@ -87,6 +87,23 @@ const contradicted = gate.decideNavigation(Object.assign({}, up, { status: "unpr
 assert.strictEqual(contradicted.fetch, false);
 assert.strictEqual(contradicted.status, "unprivate unless tor");
 
+const mnemonic = new Array(11).fill("abandon").concat(["about"]).join(" ");
+const secretDown = gate.decideNavigation(down, mnemonic);
+assert.strictEqual(secretDown.fetch, false);
+assert.strictEqual(secretDown.reason, "secret-refused");
+assert.strictEqual(secretDown.url, "");
+assert.strictEqual(secretDown.status, "unprivate unless tor");
+assert.strictEqual(secretDown.engine, false);
+const secretUp = gate.decideNavigation(up, "shewall.bin");
+assert.strictEqual(secretUp.fetch, false);
+assert.strictEqual(secretUp.reason, "secret-refused");
+assert.strictEqual(secretUp.url, "");
+assert.strictEqual(secretUp.status, "private via tor");
+assert.strictEqual(secretUp.private, true);
+const hexKey = gate.decideNavigation(down, "ab".repeat(32));
+assert.strictEqual(hexKey.reason, "secret-refused");
+assert.strictEqual(hexKey.url, "");
+
 const loopback6 = gate.decideNavigation(Object.assign({}, up, { socksHost: "::1" }), onion);
 assert.strictEqual(loopback6.fetch, true);
 assert.strictEqual(loopback6.status, "private via tor");

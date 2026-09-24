@@ -244,6 +244,15 @@
     }
     var decision = gate.decideNavigation(status, raw);
     paint(decision);
+    if (decision.reason === "secret-refused") {
+      document.getElementById("url").value = "";
+      blankFrame();
+      document.getElementById("snapshot").hidden = true;
+      var heldSecret = document.getElementById("panel");
+      heldSecret.hidden = false;
+      heldSecret.textContent = [decision.private === true ? PRIVATE : UNPRIVATE, "Refused."].join("\n");
+      return false;
+    }
     if (!decision.allow || decision.fetch !== true) {
       if (decision.local && decision.allow) {
         if (!opts.replace && !opts.fromHistory) remember(tab, decision.url, "New Tab", false);

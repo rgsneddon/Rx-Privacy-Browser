@@ -168,3 +168,35 @@ def classify_url(raw: str, *, prefer_https: bool = True) -> ClassifiedUrl:
     query = _strip_tracking(parts.query)
     url = urlunsplit((scheme, netloc, path, query, ""))
     return ClassifiedUrl(True, url, True, onion, "onion" if onion else "clearnet", host)
+
+
+_MNEMONIC_WORD = re.compile(r"^[a-z]{3,8}$")
+_SECRET_HEX = re.compile(r"^[0-9a-fA-F]{64}$|^[0-9a-fA-F]{128}$")
+_XPRV = re.compile(r"(?:^|\s)xprv[1-9a-z]{10,}")
+
+
+def secret_paste_reason(raw: str) -> str | None:
+    """Why a paste must not enter Rx, or None when it is ordinary navigation.
+
+    The returned reason never includes the pasted text.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    low = text.lower()
+    if "shewall" in low:
+        return "shewall"
+    if (
+        "begin private key" in low
+        or "begin openssh private key" in low
+        or "begin ec private key" in low
+    ):
+        return "private-key"
+    if _XPRV.search(low):
+        return "private-key"
+    if _SECRET_HEX.fullmatch(text):
+        return "private-key"
+    words = low.split()
+    if len(words) in {12, 15, 18, 21, 24} and all(_MNEMONIC_WORD.fullmatch(w) for w in words):
+        return "mnemonic"
+    return None

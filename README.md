@@ -20,6 +20,8 @@ The session is private only when Tor is bootstrapped (`PROGRESS=100`) **and** a 
 
 Local `about:newtab` still opens when Tor is down. It does not make the session private.
 
+A paste that is a seed, mnemonic, `shewall` path, or private key is refused. It is not fetched, not stored as the tab URL, and not echoed in the status line. The same class of material is refused from Rx into Continuum Send and Closure by the host gate.
+
 ## Continuum install
 
 1. Host the pinned file unchanged:
@@ -28,7 +30,7 @@ Local `about:newtab` still opens when Tor is down. It does not make the session 
 2. Mint a `vort1.` key for that exact origin and those exact bytes (below).
 3. In the Shear wallet: **Vortex → Add new vortice → paste the key**.
    The wallet downloads the origin, checks the bundle hash, and stores the dapp.
-4. Opening the chip shows a real page only after the Continuum host hook in `continuum/HOST_HOOK.md` is present. Today the wallet chip pane shows name, program id, and origin. It does not render third-party `source`. The body in this repo is what that hook should load.
+4. Opening the chip shows a real page only after the Continuum host hook. Tip `c02f787` stores the body and shows name, program id, and origin. It does not run a WebView or Tor SOCKS. That host change is **OPEN-HOST** on shear-testnet branch `cursor/rx-isolated-tor-host-d7ca`: an out-of-process surface, status `unprivate unless tor`, and a Tor SOCKS bridge. No preinstall. No second vault. No invent or pool edits.
 
 This repo does not mint SHE, does not ask for a Shear password or `shewall.bin`, and does not use a reserved program id.
 

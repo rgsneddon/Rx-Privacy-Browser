@@ -237,9 +237,50 @@
     );
   }
 
+  function secretPasteReason(raw) {
+    var text = String(raw == null ? "" : raw).trim();
+    if (!text) return null;
+    var low = text.toLowerCase();
+    if (low.indexOf("shewall") >= 0) return "shewall";
+    if (
+      low.indexOf("begin private key") >= 0 ||
+      low.indexOf("begin openssh private key") >= 0 ||
+      low.indexOf("begin ec private key") >= 0
+    ) {
+      return "private-key";
+    }
+    if (/(?:^|\s)xprv[1-9a-z]{10,}/.test(low)) return "private-key";
+    if (/^[0-9a-f]{64}$/i.test(text) || /^[0-9a-f]{128}$/i.test(text)) return "private-key";
+    var words = low.split(/\s+/);
+    if (words.length === 12 || words.length === 15 || words.length === 18 || words.length === 21 || words.length === 24) {
+      var shaped = true;
+      for (var i = 0; i < words.length; i++) {
+        if (!/^[a-z]{3,8}$/.test(words[i])) {
+          shaped = false;
+          break;
+        }
+      }
+      if (shaped) return "mnemonic";
+    }
+    return null;
+  }
+
   function decideNavigation(status, raw) {
     var routing = isRouting(status);
     var live = routing ? PRIVATE_VIA_TOR : UNPRIVATE_UNLESS_TOR;
+    if (secretPasteReason(raw)) {
+      return {
+        allow: false,
+        fetch: false,
+        local: false,
+        private: routing,
+        status: live,
+        url: "",
+        reason: "secret-refused",
+        engine: false,
+        onion: false,
+      };
+    }
     var classified = classifyUrl(raw);
     if (!classified.ok) {
       return {
@@ -314,5 +355,6 @@
     decideNavigation: decideNavigation,
     isOnionHost: isOnionHost,
     isRouting: isRouting,
+    secretPasteReason: secretPasteReason,
   };
 });

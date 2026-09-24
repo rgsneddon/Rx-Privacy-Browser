@@ -13,7 +13,7 @@ from rx.fence import (
     routing_allowed,
 )
 from rx.fetch import Page, PolicyStop, fetch_through_tor
-from rx.policy import classify_url, is_tracker_host
+from rx.policy import classify_url, is_tracker_host, secret_paste_reason
 from rx.tor import null_tor
 
 
@@ -78,6 +78,17 @@ class BrowseSession:
     def navigate(self, raw: str) -> NavResult:
         routing = self.private()
         status = PRIVATE_VIA_TOR if routing else UNPRIVATE_UNLESS_TOR
+        if secret_paste_reason(raw):
+            return NavResult(
+                False,
+                True,
+                False,
+                status,
+                routing,
+                "",
+                "secret-refused",
+                False,
+            )
         classified = classify_url(raw)
         if not classified.ok:
             return NavResult(
