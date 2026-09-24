@@ -114,6 +114,28 @@ class TestOnionSocksOnly(unittest.TestCase):
         self.assertTrue(result.onion)
         self.assertEqual(shell.tabs.active_tab.url, "about:newtab")
 
+    def test_shell_navigate_calls_the_privacy_tor_gate(self):
+        from rx.privacy import PrivacyDefaults
+
+        shell = RxShell(repo_root=ROOT)
+        shell.bootstrap()
+        src = (ROOT / "rx" / "shell.py").read_text(encoding="utf-8")
+        self.assertIn("self.privacy.navigate(url)", src)
+        self.assertEqual(
+            shell.privacy.navigate("https://example.com/"),
+            "https://example.com/",
+        )
+        result = shell.navigate("https://example.com/")
+        self.assertEqual(result.status, UNPRIVATE_UNLESS_TOR)
+        self.assertEqual(result.reason, "tor-down")
+        self.assertFalse(result.fetch)
+        with self.assertRaises(AssertionError):
+            PrivacyDefaults(vpn_relay=True).navigate("https://example.com/")
+        with self.assertRaises(AssertionError):
+            PrivacyDefaults(traffic_relay="vpn").navigate("https://example.com/")
+        for path in (ROOT / "rx").glob("*.py"):
+            self.assertNotIn("enableVpn", path.read_text(encoding="utf-8"), path.name)
+
 
 if __name__ == "__main__":
     unittest.main()

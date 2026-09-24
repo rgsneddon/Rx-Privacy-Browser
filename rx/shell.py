@@ -95,8 +95,12 @@ class RxShell:
     def close_tab(self, tab_id: int) -> Optional[Tab]:
         return self.tabs.close_tab(tab_id)
 
+    def _session_navigate(self, url: str) -> NavResult:
+        """Privacy gate first. A failed fence never reaches the fetcher."""
+        return self.session.navigate(self.privacy.navigate(url))
+
     def navigate(self, url: str) -> NavResult:
-        result = self.session.navigate(url)
+        result = self._session_navigate(url)
         self.state.last_nav = result
         if result.allowed and not result.blocked:
             tab = self.tabs.navigate_active(result.url)
@@ -110,7 +114,7 @@ class RxShell:
         tab = self.tabs.active_tab
         if tab is None:
             return None
-        result = self.session.navigate(tab.url)
+        result = self._session_navigate(tab.url)
         self.state.last_nav = result
         if result.allowed and not result.blocked:
             if tab.url != result.url:
@@ -123,7 +127,7 @@ class RxShell:
         tab = self.tabs.active_tab
         if tab is None or not tab.history:
             return None
-        result = self.session.navigate(tab.history[-1])
+        result = self._session_navigate(tab.history[-1])
         self.state.last_nav = result
         if result.blocked or not result.allowed:
             return result
@@ -134,7 +138,7 @@ class RxShell:
         tab = self.tabs.active_tab
         if tab is None or not tab.forward:
             return None
-        result = self.session.navigate(tab.forward[-1])
+        result = self._session_navigate(tab.forward[-1])
         self.state.last_nav = result
         if result.blocked or not result.allowed:
             return result

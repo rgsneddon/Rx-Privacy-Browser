@@ -1,10 +1,24 @@
 """OPEN-HOST for shear-testnet — the browser body cannot run Tor inside the chip alone.
 
-Continuum tip `c02f787` pastes a vort1 key, fetches the origin, and shows a chip.
-It has no in-wallet WebView and no Tor SOCKS. Apply
-`continuum/host/0001-isolate-rx-chip-behind-tor-socks.patch` on shear-testnet
-at `c02f787` as branch `cursor/rx-isolated-tor-host-d7ca`. This agent cannot
-push to that repo. The patch does not edit invent or pool.
+CODEBASE-RX-TOR-MAP. Continuum tip `c02f787` pastes a vort1 key, fetches the
+origin over clearnet `HttpClient` (vort1 pin only), and shows metadata plus
+Remove for a third-party chip. It has no WebView. `url_launcher` is external
+only and must not carry browser pages.
+
+Apply both patches on shear-testnet at `c02f787`, branch
+`cursor/rx-isolated-tor-host-d7ca`:
+
+- `continuum/host/0001-isolate-rx-chip-behind-tor-socks.patch`
+- `continuum/host/0002-pin-rx-webview-host-and-tor-sidecars.patch`
+
+Local tip `c90a1c4`. This agent cannot push to that repo (403). The patches
+do not edit invent or pool. Pins: `continuum/HANDOFF.md`.
+
+WebView package is `webview_flutter` 4.13.0 and it is not in pubspec.
+Tor binaries are not vendored: Linux/macOS `tor`, Windows `tor.exe`,
+Android `libtor.so`, SOCKS `127.0.0.1:9070`, control `127.0.0.1:9071`.
+There is no live vort1 origin. The example URL is documentation only.
+Gallery stays not Ready.
 
 Do not land inside Rx.
 

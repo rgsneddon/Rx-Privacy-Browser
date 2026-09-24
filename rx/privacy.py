@@ -72,8 +72,20 @@ class PrivacyDefaults:
             "status_unprivate": self.status_unprivate,
         }
 
+    def navigate(self, raw: str) -> str:
+        """Tor gate for every shell navigation. VPN is not required and is not a relay.
+
+        Returns the raw address-bar text. The session still classifies it and
+        refuses a fetch unless Tor is routing.
+        """
+        self.assert_fence()
+        if self.vpn_relay or self.traffic_relay != "tor":
+            raise AssertionError("VPN relay is forbidden")
+        return raw
+
     def normalize_url(self, raw: str) -> str:
         """Normalize address-bar input. Unsafe schemes collapse to the new tab."""
+        self.navigate(raw)
         got = classify_url(raw, prefer_https=self.prefer_https)
         if not got.ok:
             return self.start_url

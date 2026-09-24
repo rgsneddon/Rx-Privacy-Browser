@@ -30,7 +30,7 @@ A paste that is a seed, mnemonic, `shewall` path, or private key is refused. It 
 2. Mint a `vort1.` key for that exact origin and those exact bytes (below).
 3. In the Shear wallet: **Vortex → Add new vortice → paste the key**.
    The wallet downloads the origin, checks the bundle hash, and stores the dapp.
-4. Opening the chip shows a real page only after the Continuum host hook. Tip `c02f787` stores the body and shows name, program id, and origin. It does not run a WebView or Tor SOCKS. That host change is **OPEN-HOST**: apply `continuum/host/0001-isolate-rx-chip-behind-tor-socks.patch` on shear-testnet at `c02f787`. It is an out-of-process surface, status `unprivate unless tor`, and a Tor SOCKS bridge. No preinstall. No second vault. No invent or pool edits.
+4. Opening the chip shows a real page only after the Continuum host hook. Tip `c02f787` stores the body and shows name, program id, and origin. It does not run a WebView or Tor SOCKS. That host change is **OPEN-HOST** (CODEBASE-RX-TOR-MAP): apply `continuum/host/0001-isolate-rx-chip-behind-tor-socks.patch` and `continuum/host/0002-pin-rx-webview-host-and-tor-sidecars.patch` on shear-testnet at `c02f787`. The mount is `RxWebViewHost` (`webview_flutter` 4.13.0, not in pubspec). Status is `unprivate unless tor` until a non-vendored Tor sidecar is routing. No preinstall. No second vault. No invent or pool edits. Pins are in `continuum/HANDOFF.md`.
 
 This repo does not mint SHE, does not ask for a Shear password or `shewall.bin`, and does not use a reserved program id.
 
@@ -39,6 +39,8 @@ This repo does not mint SHE, does not ask for a Shear password or `shewall.bin`,
 | programId | `rx-privacy-browser-v1` |
 | name | `Rx Privacy Browser` |
 | example origin | `https://rx-privacy-browser.example/vortice/rx-privacy-browser.vortice.json` |
+| live origin | none |
+| WebView package | `webview_flutter` 4.13.0, not in the wallet pubspec |
 | path | `/vortice/rx-privacy-browser.vortice.json` |
 
 `.example` is a documentation host. Point the key at the origin you actually serve. If the bytes change, mint a new key.
@@ -136,7 +138,9 @@ launch_rx.py                         # bridge by default; --smoke; --tk
 rx/                                  # gate, Tor SOCKS, mint, bridge
 continuum/rx-privacy-browser.vortice.json   # exact origin bytes
 continuum/browser.html               # UI embedded in that JSON
+continuum/HANDOFF.md                 # WebView, Tor binary, and origin pins
 continuum/HOST_HOOK.md               # shear-testnet follow-up, not applied there
+continuum/host/                      # patches for shear-testnet, separate from invent
 continuum/ui/                        # gate + chrome sources
 extensions/restore-privacy-vpn/      # on-disk package, not the traffic relay
 ```

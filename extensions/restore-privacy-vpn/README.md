@@ -7,6 +7,9 @@ Shear Privacy VPN remains a separate vortice. Rx browsing is Tor circuits only.
 
 Chromium **Manifest V3** extension for **browser-scoped** Connect / Disconnect.
 This package is dormant inside Rx. Do not point the Rx bridge or engine at its proxy.
+`enableVpn(..., { forRxBrowser: true })` refuses port 1080 as an Rx traffic relay:
+status `error`, `proxyConfig` null, error `unprivate unless tor`. The product
+Connect path for this dormant package is unchanged.
 
 ## Honesty
 

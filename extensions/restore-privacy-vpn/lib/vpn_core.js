@@ -71,13 +71,35 @@
   }
 
   /**
+   * Rx Privacy Browser must not use this function as its traffic relay.
+   * Port 1080 stays the dormant product proxy. Passing forRxBrowser refuses
+   * that relay and does not install a proxy config.
+   * @param {object} [opts]
+   * @returns {boolean}
+   */
+  function rxBrowserRelayRefused(opts) {
+    return !!(opts && opts.forRxBrowser === true);
+  }
+
+  /**
    * Enable browser-scoped VPN routing (Connect).
    * @param {object} [prev]
-   * @param {object} [opts] host/port/scheme/bypassList
+   * @param {object} [opts] host/port/scheme/bypassList/forRxBrowser
    * @returns {object} next state
    */
   function enableVpn(prev, opts) {
     var base = prev && typeof prev === "object" ? prev : defaultState();
+    if (rxBrowserRelayRefused(opts)) {
+      return {
+        status: STATUS.ERROR,
+        proxyConfig: null,
+        error: "unprivate unless tor",
+        browserScopeOnly: true,
+        rxBrowserRelay: false,
+        productTitle: base.productTitle || "RESTORE PRIVACY VPN",
+        catalogVersion: base.catalogVersion || "3.3.3",
+      };
+    }
     try {
       var cfg = buildProxyConfig(opts);
       return {
@@ -151,6 +173,7 @@
     PRODUCT_BROWSER_PROXY: PRODUCT_BROWSER_PROXY,
     defaultState: defaultState,
     buildProxyConfig: buildProxyConfig,
+    rxBrowserRelayRefused: rxBrowserRelayRefused,
     enableVpn: enableVpn,
     disableVpn: disableVpn,
     getStatus: getStatus,

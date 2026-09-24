@@ -1,0 +1,610 @@
+From c90a1c4fdadb280bfc2871be38e669e88bc887ee Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Thu, 24 Sep 2026 23:45:35 +0000
+Subject: [PATCH] feat: pin the Rx WebView host and Tor sidecars
+
+CODEBASE-RX-TOR-MAP. The third-party Rx chip mounts RxWebViewHost.
+Origin HttpClient stays a vort1 pin fetch. Tor sidecars name loopback
+SOCKS 9070 and do not vendor binaries or use port 1080.
+---
+ wallet/lib/main.dart               |   7 +-
+ wallet/lib/shear_rx_pane.dart      |  59 ++++++++++---
+ wallet/lib/shear_tor_bridge.dart   | 134 +++++++++++++++++++++++++++++
+ wallet/lib/shear_vortex.dart       |  15 ++++
+ wallet/tool/rx_host_check.dart     |  51 +++++++++++
+ wallet/tor/android/README.md       |  11 +++
+ wallet/tor/linux/tor-sidecar.sh    |  44 ++++++++++
+ wallet/tor/macos/tor-sidecar.sh    |  44 ++++++++++
+ wallet/tor/sidecars.json           |  36 ++++++++
+ wallet/tor/windows/tor-sidecar.ps1 |  41 +++++++++
+ 10 files changed, 429 insertions(+), 13 deletions(-)
+ create mode 100644 wallet/lib/shear_tor_bridge.dart
+ create mode 100644 wallet/tor/android/README.md
+ create mode 100755 wallet/tor/linux/tor-sidecar.sh
+ create mode 100755 wallet/tor/macos/tor-sidecar.sh
+ create mode 100644 wallet/tor/sidecars.json
+ create mode 100644 wallet/tor/windows/tor-sidecar.ps1
+
+diff --git a/wallet/lib/main.dart b/wallet/lib/main.dart
+index 30a1552..4cbf03f 100644
+--- a/wallet/lib/main.dart
++++ b/wallet/lib/main.dart
+@@ -322,6 +322,8 @@ class ShearWalletAppState extends State<ShearWalletApp> with WidgetsBindingObser
+     if (_vorticeBusy) return;
+     _vorticeBusy = true;
+     try {
++      // Origin fetch pins the vort1 body. It is not Rx page traffic.
++      assertOriginFetchIsPinOnly();
+       final got = widget.downloadVortice != null
+           ? await widget.downloadVortice!(key)
+           : await downloadVorticeFromOrigin(key);
+@@ -3010,7 +3012,10 @@ class ShearWalletAppState extends State<ShearWalletApp> with WidgetsBindingObser
+         Text('Program  ${cur.id}'),
+         if (cur.origin != null) Text('Origin  ${cur.origin}'),
+         if (cur.id == rxPrivacyBrowserProgram) ...[
+-          RxHostPane(source: cur.source),
++          RxWebViewHost(
++            source: cur.source,
++            binaryPresent: false,
++          ),
+           const SizedBox(height: 12),
+         ],
+         const Text('Third-party vortice cannot mint SHE; it must fund its own rewards.'),
+diff --git a/wallet/lib/shear_rx_pane.dart b/wallet/lib/shear_rx_pane.dart
+index f73c9d2..2e9784e 100644
+--- a/wallet/lib/shear_rx_pane.dart
++++ b/wallet/lib/shear_rx_pane.dart
+@@ -1,22 +1,38 @@
+-/// In-wallet surface for Rx. It does not receive a Shear identity, seed, or shewall.
++/// In-wallet WebView mount for Rx. It does not receive a Shear identity.
+ ///
+-/// The browser document stays out of the spend isolate. Remote fetches go through
+-/// Tor SOCKS or they are refused. There is no JavaScript channel to Spendable.
++/// `webview_flutter` 4.13.0 is the Android, iOS, and macOS package. It is not
++/// linked from pubspec, because the Linux and Windows release builds have no
++/// implementation. This widget is the mount. It does not call `url_launcher`
++/// and it does not fetch pages with the vort1 origin client.
++///
++/// Remote bytes stay out of the spend isolate. The status chip is
++/// `unprivate unless tor` until a non-vendored sidecar binary is present and
++/// Tor is routing.
+ import 'package:flutter/material.dart';
+ 
+ import 'shear_rx_host.dart';
++import 'shear_tor_bridge.dart';
++import 'shear_vortex.dart';
+ 
+-class RxHostPane extends StatefulWidget {
+-  const RxHostPane({super.key, required this.source, this.tor = RxTorState.down});
++class RxWebViewHost extends StatefulWidget {
++  const RxWebViewHost({
++    super.key,
++    required this.source,
++    this.tor = RxTorState.down,
++    this.platform = 'linux',
++    this.binaryPresent = false,
++  });
+ 
+   final String? source;
+   final RxTorState tor;
++  final String platform;
++  final bool binaryPresent;
+ 
+   @override
+-  State<RxHostPane> createState() => RxHostPaneState();
++  State<RxWebViewHost> createState() => RxWebViewHostState();
+ }
+ 
+-class RxHostPaneState extends State<RxHostPane> {
++class RxWebViewHostState extends State<RxWebViewHost> {
+   final _url = TextEditingController();
+   String _panel = '';
+ 
+@@ -26,14 +42,28 @@ class RxHostPaneState extends State<RxHostPane> {
+     super.dispose();
+   }
+ 
++  String get _status => sidecarStatus(
++        platform: widget.platform,
++        binaryPresent: widget.binaryPresent,
++        tor: widget.tor,
++      );
++
++  bool get _routing =>
++      _status == privateViaTor && rxRoutingAllowed(widget.tor);
++
+   void _go() {
+     final raw = _url.text;
++    if (rxBrowserMayUseUrlLauncher() || browserMayUseOriginClient()) {
++      _url.clear();
++      setState(() => _panel = '$unprivateUnlessTor\nNot fetched.');
++      return;
++    }
+     if (!rxAcceptsPaste(raw)) {
+       _url.clear();
+-      setState(() => _panel = '${rxStatusLine(widget.tor)}\nRefused.');
++      setState(() => _panel = '$_status\nRefused.');
+       return;
+     }
+-    if (!rxRoutingAllowed(widget.tor)) {
++    if (!_routing) {
+       setState(() => _panel = '$unprivateUnlessTor\nNot fetched.');
+       return;
+     }
+@@ -47,10 +77,15 @@ class RxHostPaneState extends State<RxHostPane> {
+     return Column(
+       crossAxisAlignment: CrossAxisAlignment.start,
+       children: [
+-        Text(rxStatusLine(widget.tor), key: const Key('rx-status')),
++        Chip(
++          key: const Key('rx-status'),
++          label: Text(_status),
++          avatar: Icon(_routing ? Icons.lock_outline : Icons.lock_open),
++        ),
+         const SizedBox(height: 8),
+-        const Text(
+-          'Out of process. No shared cookies or storage. No bridge to Spendable, shewall, or keys.',
++        Text(
++          'WebView host $kRxWebViewPackage $kRxWebViewVersion '
++          '(not in pubspec). Out of process. No shared cookies or storage.',
+         ),
+         TextField(
+           key: const Key('rx-url'),
+diff --git a/wallet/lib/shear_tor_bridge.dart b/wallet/lib/shear_tor_bridge.dart
+new file mode 100644
+index 0000000..b14fbee
+--- /dev/null
++++ b/wallet/lib/shear_tor_bridge.dart
+@@ -0,0 +1,134 @@
++/// Tor SOCKS bridge pin for the Rx Privacy Browser chip.
++///
++/// CODEBASE-RX-TOR-MAP. This library does not vendor Tor, does not add
++/// `webview_flutter` to the wallet, and does not fetch browser pages.
++/// A missing sidecar binary keeps the chip on `unprivate unless tor`.
++library;
++
++import 'shear_rx_host.dart';
++
++const kRxWebViewPackage = 'webview_flutter';
++const kRxWebViewVersion = '4.13.0';
++
++/// Linux and Windows release builds have no implementation of this package.
++/// It stays out of pubspec until those builds are proven with it linked.
++const kRxWebViewInPubspec = false;
++
++/// No public vort1 origin is published. The example host is documentation.
++const String? kLiveVort1Origin = null;
++const kExampleVort1Origin =
++    'https://rx-privacy-browser.example/vortice/rx-privacy-browser.vortice.json';
++const kGalleryReady = false;
++
++const kRxSocksHost = '127.0.0.1';
++const kRxSocksPort = 9070;
++const kRxControlPort = 9071;
++
++class TorSidecarPin {
++  const TorSidecarPin({
++    required this.platform,
++    required this.binary,
++    required this.socksHost,
++    required this.socksPort,
++    required this.controlHost,
++    required this.controlPort,
++    required this.vendored,
++  });
++
++  final String platform;
++  final String binary;
++  final String socksHost;
++  final int socksPort;
++  final String controlHost;
++  final int controlPort;
++  final bool vendored;
++}
++
++const kTorSidecars = <String, TorSidecarPin>{
++  'android': TorSidecarPin(
++    platform: 'android',
++    binary: 'libtor.so',
++    socksHost: kRxSocksHost,
++    socksPort: kRxSocksPort,
++    controlHost: kRxSocksHost,
++    controlPort: kRxControlPort,
++    vendored: false,
++  ),
++  'linux': TorSidecarPin(
++    platform: 'linux',
++    binary: 'tor',
++    socksHost: kRxSocksHost,
++    socksPort: kRxSocksPort,
++    controlHost: kRxSocksHost,
++    controlPort: kRxControlPort,
++    vendored: false,
++  ),
++  'macos': TorSidecarPin(
++    platform: 'macos',
++    binary: 'tor',
++    socksHost: kRxSocksHost,
++    socksPort: kRxSocksPort,
++    controlHost: kRxSocksHost,
++    controlPort: kRxControlPort,
++    vendored: false,
++  ),
++  'windows': TorSidecarPin(
++    platform: 'windows',
++    binary: 'tor.exe',
++    socksHost: kRxSocksHost,
++    socksPort: kRxSocksPort,
++    controlHost: kRxSocksHost,
++    controlPort: kRxControlPort,
++    vendored: false,
++  ),
++};
++
++/// Page loads must not use `url_launcher`. Social links stay external elsewhere.
++bool rxBrowserMayUseUrlLauncher() => false;
++
++/// True only for a loopback sidecar that is not the VPN port and is not vendored
++/// into this tree. Presence of the binary is a separate check.
++bool sidecarRelayAllowed(TorSidecarPin pin) {
++  if (pin.vendored) return false;
++  if (pin.socksPort == kVpnProxyPort || pin.controlPort == kVpnProxyPort) {
++    return false;
++  }
++  if (pin.socksHost != '127.0.0.1' && pin.socksHost != '::1') return false;
++  if (pin.controlHost != '127.0.0.1' && pin.controlHost != '::1') return false;
++  if (pin.binary.isEmpty) return false;
++  return true;
++}
++
++/// Missing binary, a bad pin, or a down circuit: exact unprivate status.
++String sidecarStatus({
++  required String platform,
++  required bool binaryPresent,
++  required RxTorState tor,
++}) {
++  final pin = kTorSidecars[platform];
++  if (pin == null || !sidecarRelayAllowed(pin) || !binaryPresent) {
++    return unprivateUnlessTor;
++  }
++  if (tor.socksPort == kVpnProxyPort) return unprivateUnlessTor;
++  return rxStatusLine(tor);
++}
++
++RxTorState sidecarTorState({
++  required String platform,
++  required bool binaryPresent,
++  required bool bootstrapped,
++  required bool circuitEstablished,
++  required bool socksListening,
++}) {
++  final pin = kTorSidecars[platform];
++  if (pin == null || !binaryPresent) return RxTorState.down;
++  return RxTorState(
++    socksListening: socksListening,
++    bootstrapped: bootstrapped,
++    bootstrapProgress: bootstrapped ? 100 : 0,
++    circuitEstablished: circuitEstablished,
++    socksHost: pin.socksHost,
++    socksPort: pin.socksPort,
++    vpnRelay: false,
++  );
++}
+diff --git a/wallet/lib/shear_vortex.dart b/wallet/lib/shear_vortex.dart
+index 015ac7a..664b704 100644
+--- a/wallet/lib/shear_vortex.dart
++++ b/wallet/lib/shear_vortex.dart
+@@ -4,6 +4,8 @@ import 'dart:math';
+ 
+ import 'package:crypto/crypto.dart';
+ 
++import 'shear_tor_bridge.dart';
++
+ const vortexPersonal = 'chronoflux-Omega-v1';
+ const vorticeKeyPrefix = 'vort1.';
+ const reserveProgram = 'shear-reserve-v1';
+@@ -251,6 +253,18 @@ List<Vortice> deployVortice(List<Vortice> list, Vortice v) {
+   return [...list, v];
+ }
+ 
++/// The origin [HttpClient] pins vort1 bytes. Browser navigation must not use it.
++bool browserMayUseOriginClient() => false;
++
++void assertOriginFetchIsPinOnly() {
++  if (browserMayUseOriginClient() || rxBrowserMayUseUrlLauncher()) {
++    throw StateError('origin HttpClient is not the browser');
++  }
++  if (kLiveVort1Origin != null || kGalleryReady || kRxWebViewInPubspec) {
++    throw StateError('live origin, gallery, or WebView dep is not pinned');
++  }
++}
++
+ /// Drop a pasted vortice from this wallet roster only. Does not fetch or
+ /// change the vort1 origin. The Reserve (and other pinned ids) stay.
+ List<Vortice> removeVortice(List<Vortice> list, String id) {
+@@ -268,6 +282,7 @@ Future<Vortice?> downloadVorticeFromOrigin(
+   HttpClient? http,
+   String? source,
+ }) async {
++  assertOriginFetchIsPinOnly();
+   if (source != null) return verifyVorticeDownload(key, source);
+   final parsed = parseVorticeKey(key);
+   if (parsed == null || parsed.origin == null) return null;
+diff --git a/wallet/tool/rx_host_check.dart b/wallet/tool/rx_host_check.dart
+index a62aebb..82a03e5 100644
+--- a/wallet/tool/rx_host_check.dart
++++ b/wallet/tool/rx_host_check.dart
+@@ -1,6 +1,8 @@
++import 'dart:convert';
+ import 'dart:io';
+ 
+ import '../lib/shear_rx_host.dart';
++import '../lib/shear_tor_bridge.dart';
+ 
+ void main() async {
+   if (rxStatusLine(RxTorState.down) != unprivateUnlessTor) {
+@@ -68,6 +70,55 @@ void main() async {
+   if (seen.length < 5 || seen[3] != 3) throw StateError('atyp ${seen}');
+   final name = String.fromCharCodes(seen.sublist(5, 5 + seen[4]));
+   if (name != onion) throw StateError('host $name');
++
++  if (rxBrowserMayUseUrlLauncher()) {
++    throw StateError('browser client');
++  }
++  if (kLiveVort1Origin != null || kGalleryReady || kRxWebViewInPubspec) {
++    throw StateError('pins');
++  }
++  if (kRxWebViewPackage != 'webview_flutter' || kRxWebViewVersion != '4.13.0') {
++    throw StateError('webview package');
++  }
++  const want = ['android', 'linux', 'macos', 'windows'];
++  for (final name in want) {
++    final pin = kTorSidecars[name];
++    if (pin == null || !sidecarRelayAllowed(pin)) throw StateError('sidecar $name');
++    if (pin.socksPort == kVpnProxyPort) throw StateError('vpn port $name');
++  }
++  if (sidecarStatus(
++        platform: 'linux',
++        binaryPresent: false,
++        tor: RxTorState.routing,
++      ) !=
++      unprivateUnlessTor) {
++    throw StateError('missing binary');
++  }
++  final walletRoot = File(Platform.script.toFilePath()).parent.parent;
++  final pubspec = File('${walletRoot.path}/pubspec.yaml').readAsStringSync();
++  if (pubspec.contains('webview_flutter')) throw StateError('webview in pubspec');
++  final sideFile = File('${walletRoot.path}/tor/sidecars.json');
++  final side = jsonDecode(sideFile.readAsStringSync());
++  if (side is! Map || side['liveOrigin'] != null || side['galleryReady'] != false) {
++    throw StateError('sidecar json');
++  }
++  if (side['webviewInPubspec'] != false) throw StateError('webview flag');
++  final platforms = side['platforms'];
++  if (platforms is! Map) throw StateError('platforms');
++  for (final name in want) {
++    final row = platforms[name];
++    final pin = kTorSidecars[name]!;
++    if (row is! Map) throw StateError('row $name');
++    if (row['binary'] != pin.binary || row['vendored'] != false) {
++      throw StateError('binary $name');
++    }
++    if (row['socks'] != '127.0.0.1:9070') throw StateError('socks $name');
++  }
++  final banned = {'tor', 'tor.exe', 'libtor.so'};
++  for (final ent in Directory('${walletRoot.path}/tor').listSync(recursive: true)) {
++    final base = ent.uri.pathSegments.where((s) => s.isNotEmpty).last;
++    if (banned.contains(base)) throw StateError('vendored $base');
++  }
+   stdout.writeln('rx host check ok');
+   exit(0);
+ }
+diff --git a/wallet/tor/android/README.md b/wallet/tor/android/README.md
+new file mode 100644
+index 0000000..bcab2ca
+--- /dev/null
++++ b/wallet/tor/android/README.md
+@@ -0,0 +1,11 @@
++# Android Tor sidecar
++
++Binary name: `libtor.so`.
++
++This tree does not vendor that library. Until the host process finds it and a
++loopback SOCKS listener is up on `127.0.0.1:9070` (control `127.0.0.1:9071`),
++the Rx chip status is `unprivate unless tor`.
++
++Port `1080` is the Restore Privacy VPN proxy. It is not this sidecar.
++`webview_flutter` 4.13.0 is the WebView package for Android, iOS, and macOS.
++It is not a dependency in `wallet/pubspec.yaml`.
+diff --git a/wallet/tor/linux/tor-sidecar.sh b/wallet/tor/linux/tor-sidecar.sh
+new file mode 100755
+index 0000000..6f14b50
+--- /dev/null
++++ b/wallet/tor/linux/tor-sidecar.sh
+@@ -0,0 +1,44 @@
++#!/bin/sh
++# Linux Tor sidecar pin for Rx. Does not download or vendor tor.
++# Port 1080 is the VPN proxy and is refused. A missing binary stays unprivate.
++set -eu
++SOCKS_PORT="${RX_SOCKS_PORT:-9070}"
++CONTROL_PORT="${RX_CONTROL_PORT:-9071}"
++MODE="${1:-check}"
++
++refuse() {
++  echo "unprivate unless tor"
++  exit 2
++}
++
++if [ "$SOCKS_PORT" = "1080" ] || [ "$CONTROL_PORT" = "1080" ]; then
++  refuse
++fi
++if [ "$MODE" = "1080" ]; then
++  refuse
++fi
++
++TOR_BIN="${RX_TOR_BIN:-tor}"
++if ! command -v "$TOR_BIN" >/dev/null 2>&1; then
++  refuse
++fi
++
++if [ "$MODE" = "check" ]; then
++  echo "private via tor pin socks=127.0.0.1:${SOCKS_PORT}"
++  exit 0
++fi
++
++if [ "$MODE" != "start" ]; then
++  refuse
++fi
++
++DATA="${RX_TOR_DATA:-${HOME}/.local/share/rx-privacy-browser/tor}"
++case "$DATA" in
++  *shewall*|*shear-wallet*|*shear_wallet*) refuse ;;
++esac
++mkdir -p "$DATA"
++exec "$TOR_BIN" \
++  --SocksPort "127.0.0.1:${SOCKS_PORT}" \
++  --ControlPort "127.0.0.1:${CONTROL_PORT}" \
++  --CookieAuthentication 1 \
++  --DataDirectory "$DATA"
+diff --git a/wallet/tor/macos/tor-sidecar.sh b/wallet/tor/macos/tor-sidecar.sh
+new file mode 100755
+index 0000000..408b076
+--- /dev/null
++++ b/wallet/tor/macos/tor-sidecar.sh
+@@ -0,0 +1,44 @@
++#!/bin/sh
++# macOS Tor sidecar pin for Rx. Does not download or vendor tor.
++# Port 1080 is the VPN proxy and is refused. A missing binary stays unprivate.
++set -eu
++SOCKS_PORT="${RX_SOCKS_PORT:-9070}"
++CONTROL_PORT="${RX_CONTROL_PORT:-9071}"
++MODE="${1:-check}"
++
++refuse() {
++  echo "unprivate unless tor"
++  exit 2
++}
++
++if [ "$SOCKS_PORT" = "1080" ] || [ "$CONTROL_PORT" = "1080" ]; then
++  refuse
++fi
++if [ "$MODE" = "1080" ]; then
++  refuse
++fi
++
++TOR_BIN="${RX_TOR_BIN:-tor}"
++if ! command -v "$TOR_BIN" >/dev/null 2>&1; then
++  refuse
++fi
++
++if [ "$MODE" = "check" ]; then
++  echo "private via tor pin socks=127.0.0.1:${SOCKS_PORT}"
++  exit 0
++fi
++
++if [ "$MODE" != "start" ]; then
++  refuse
++fi
++
++DATA="${RX_TOR_DATA:-${HOME}/Library/Application Support/rx-privacy-browser/tor}"
++case "$DATA" in
++  *shewall*|*shear-wallet*|*shear_wallet*) refuse ;;
++esac
++mkdir -p "$DATA"
++exec "$TOR_BIN" \
++  --SocksPort "127.0.0.1:${SOCKS_PORT}" \
++  --ControlPort "127.0.0.1:${CONTROL_PORT}" \
++  --CookieAuthentication 1 \
++  --DataDirectory "$DATA"
+diff --git a/wallet/tor/sidecars.json b/wallet/tor/sidecars.json
+new file mode 100644
+index 0000000..a79603f
+--- /dev/null
++++ b/wallet/tor/sidecars.json
+@@ -0,0 +1,36 @@
++{
++  "map": "CODEBASE-RX-TOR-MAP",
++  "webviewPackage": "webview_flutter",
++  "webviewVersion": "4.13.0",
++  "webviewInPubspec": false,
++  "liveOrigin": null,
++  "exampleOrigin": "https://rx-privacy-browser.example/vortice/rx-privacy-browser.vortice.json",
++  "galleryReady": false,
++  "vpnProxyPort": 1080,
++  "platforms": {
++    "android": {
++      "binary": "libtor.so",
++      "socks": "127.0.0.1:9070",
++      "control": "127.0.0.1:9071",
++      "vendored": false
++    },
++    "linux": {
++      "binary": "tor",
++      "socks": "127.0.0.1:9070",
++      "control": "127.0.0.1:9071",
++      "vendored": false
++    },
++    "macos": {
++      "binary": "tor",
++      "socks": "127.0.0.1:9070",
++      "control": "127.0.0.1:9071",
++      "vendored": false
++    },
++    "windows": {
++      "binary": "tor.exe",
++      "socks": "127.0.0.1:9070",
++      "control": "127.0.0.1:9071",
++      "vendored": false
++    }
++  }
++}
+diff --git a/wallet/tor/windows/tor-sidecar.ps1 b/wallet/tor/windows/tor-sidecar.ps1
+new file mode 100644
+index 0000000..e7c1539
+--- /dev/null
++++ b/wallet/tor/windows/tor-sidecar.ps1
+@@ -0,0 +1,41 @@
++# Windows Tor sidecar pin for Rx. Does not download or vendor tor.exe.
++# Port 1080 is the VPN proxy and is refused. A missing binary stays unprivate.
++$ErrorActionPreference = "Stop"
++$socks = if ($env:RX_SOCKS_PORT) { $env:RX_SOCKS_PORT } else { "9070" }
++$control = if ($env:RX_CONTROL_PORT) { $env:RX_CONTROL_PORT } else { "9071" }
++$mode = if ($args.Count -gt 0) { $args[0] } else { "check" }
++
++function Refuse {
++  Write-Output "unprivate unless tor"
++  exit 2
++}
++
++if ($socks -eq "1080" -or $control -eq "1080" -or $mode -eq "1080") {
++  Refuse
++}
++
++$tor = if ($env:RX_TOR_BIN) { $env:RX_TOR_BIN } else { "tor.exe" }
++$cmd = Get-Command $tor -ErrorAction SilentlyContinue
++if (-not $cmd) {
++  Refuse
++}
++
++if ($mode -eq "check") {
++  Write-Output "private via tor pin socks=127.0.0.1:$socks"
++  exit 0
++}
++
++if ($mode -ne "start") {
++  Refuse
++}
++
++$data = if ($env:RX_TOR_DATA) { $env:RX_TOR_DATA } else { Join-Path $env:LOCALAPPDATA "rx-privacy-browser\tor" }
++if ($data -match "shewall|shear-wallet|shear_wallet") {
++  Refuse
++}
++New-Item -ItemType Directory -Force -Path $data | Out-Null
++& $cmd.Source `
++  --SocksPort "127.0.0.1:$socks" `
++  --ControlPort "127.0.0.1:$control" `
++  --CookieAuthentication 1 `
++  --DataDirectory $data
+-- 
+2.43.0
+
